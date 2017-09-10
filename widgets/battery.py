@@ -2,7 +2,6 @@ from gi.repository import Gtk, Gdk, GLib
 import os.path
 import time
 import configparser
-import util
 import cairo
 
 __all__ = ["Battery"]
@@ -12,12 +11,10 @@ class Battery(Gtk.EventBox):
 		super().__init__()
 		self.path = os.path.join(path, "uevent")
 
-		self.icon2 = BatteryIcon()
-		self.icon = Gtk.Label()
+		self.icon = BatteryIcon()
 		self.text = Gtk.Label()
 		box = Gtk.Box(spacing=spacing)
 		box.pack_start(self.icon, False, False, 0)
-		box.pack_start(self.icon2, False, False, 0)
 		box.pack_start(self.text, False, False, 0)
 		self.add(box)
 
@@ -61,8 +58,7 @@ class Battery(Gtk.EventBox):
 		Capacity: {energy_full}/{energy_design} Wh ({energy_full/energy_design*100:.1f}%)
 		""").strip("\n"))
 
-		self.icon.set_text(util.symbol(["", "", "", "", ""], energy_now / energy_full))
-		self.icon2.set_value(energy_now / energy_full)
+		self.icon.set_value(energy_now / energy_full)
 
 		charge = energy_now / energy_full
 		text = "{:.0f}%".format(100 * charge)
