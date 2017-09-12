@@ -20,8 +20,6 @@ A few key features include:
 
 * Update some more status icons (temp, wifi, volume?, mpd)
 * Add some keybindings to the volume widget (maybe also mpd?)
-* Find some way to make the transparent bar visible on text-colored
-  backgrounds
 * Make escape key close popups
 * Add CSS nodes for widgets
 * Add a charging bolt to the battery icon

@@ -72,9 +72,35 @@ def create_window2():
 	bg.resize(geom.width, config.HEIGHT)
 	return bg, bg
 
+class BG(Gtk.Bin):
+	def __init__(self, child=None):
+		super().__init__()
+		if child is not None:
+			self.add(child)
+
+	def do_draw(self, ctx):
+		import cairo
+		img = cairo.ImageSurface(cairo.FORMAT_ARGB32, self.get_allocated_width(), self.get_allocated_height())
+		Gtk.Bin.do_draw(self, cairo.Context(img))
+		style = bg.get_style_context()
+		ctx.set_source_rgba(*style.get_background_color(style.get_state()))
+		f=0.33
+		F=-f
+		ctx.mask_surface(img, 0, 0)
+		ctx.mask_surface(img, f, F)
+		ctx.mask_surface(img, 0, F)
+		ctx.mask_surface(img, F, F)
+		ctx.mask_surface(img, F, 0)
+		ctx.mask_surface(img, F, f)
+		ctx.mask_surface(img, 0, f)
+		ctx.mask_surface(img, f, f)
+		ctx.mask_surface(img, f, 0)
+		ctx.set_source_surface(img)
+		ctx.paint()
+
 bg, fg = create_window()
 box = Gtk.Box()
-fg.add(box)
+fg.add(BG(box))
 right = []
 def update_seps(_=None):
 	lastVisible = False
@@ -94,6 +120,7 @@ for w in config.right():
 	w.connect("hide", update_seps)
 	box.pack_end(sep, False, False, 0)
 	box.pack_end(w, False, False, 4)
+
 box.show()
 bg.show()
 fg.show_all()
