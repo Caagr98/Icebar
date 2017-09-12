@@ -287,7 +287,7 @@ class MPD(Gtk.EventBox):
 
 class ProgressLabel(Gtk.Label):
 	def __init__(self):
-		super().__init__(self)
+		Gtk.Label.__init__(self)
 		self.set_bounds(0, 0)
 
 	def set_bounds(self, current, max):
