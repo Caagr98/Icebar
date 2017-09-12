@@ -33,12 +33,12 @@ def right():
 		widgets.RSSFeed("OotS", "http://www.giantitp.com/comics/oots.rss"),
 		widgets.RSSFeed("HG", "http://www.harpygee.com/rss.php"),
 		widgets.RSSFeed("CT", "http://www.cuttimecomic.com/rss.php"),
+		widgets.RSSFeed("TBWF", "http://www.boywhofell.com/rss.php"),
 		widgets.RSSFeed("defan", "https://defan752.wordpress.com/feed/", match=lambda e: e.category == "Sword Art Online"),
 		None,
 		widgets.FFNFeed("HPGTT", 10870770),
 		widgets.FFNFeed("MO", 10552390),
 		widgets.FFNFeed("MKO", 11815818),
 		widgets.FFNFeed("HP&G", 11950816),
-		widgets.FFNFeed("TFB", 10666740),
 	)
 	yield widgets.MPD()
