@@ -136,6 +136,8 @@ class MPD(Gtk.EventBox):
 		self.text = ProgressLabel()
 		scroll = util.scrollable(self.text, h=False, v=None)
 		scroll.set_propagate_natural_width(True)
+		self.text.connect("hide", lambda _: scroll.hide())
+		self.text.connect("show", lambda _: scroll.show())
 		box = Gtk.Box(spacing=spacing)
 		box.pack_start(self.icon, False, False, 0)
 		box.pack_start(scroll, False, False, 0)
