@@ -55,10 +55,8 @@ class CPUGraph(Gtk.DrawingArea):
 		ctx.stroke()
 
 		def draw_graph(f):
-			i = enumerate(map(lambda y: (1-f(y))*h, self.samples))
-			x, y = next(i)
-			ctx.move_to(x, y)
-			py = y
+			i = enumerate(map(lambda y: int((1-f(y))*h), self.samples))
+			py = 0
 			for x, y in i:
 				if py - y > 1:
 					ctx.line_to(x-1, y+1)
