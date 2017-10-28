@@ -24,6 +24,12 @@ class Battery(Gtk.EventBox):
 		self.connect("button-press-event", self.click)
 
 	def update(self):
+		if os.path.exists(self.path):
+			self.show()
+		else:
+			self.hide()
+			return True
+
 		cfg = configparser.ConfigParser()
 		with open(self.path, "r") as f:
 			cfg.read_string("[_]\n" + f.read())
