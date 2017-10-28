@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("Keybinder", "3.0")
@@ -54,7 +55,7 @@ def create_window():
 
 	bg.connect("configure-event", lambda win, evt, to: (to.move(*win.get_position()), to.resize(*win.get_size())) and 0, fg)
 
-	bg.connect("show", lambda win: fg.show())
+	bg.connect("show", lambda win: (fg.hide(), fg.show()))
 	bg.connect("hide", lambda win: fg.hide())
 	bg.connect("destroy", lambda win: fg.destroy())
 
