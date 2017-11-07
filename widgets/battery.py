@@ -41,19 +41,20 @@ class Battery(Gtk.EventBox):
 			except ValueError:
 				pass
 			battery[k.lower()[13:]] = val
-		def get(*props):
-			for prop in props:
-				if prop in battery:
-					return battery[prop]
-			return None
+		def get(a, b=None): # Because XPS 9560 is weird
+			if a in battery:
+				return battery[a] / 1000000
+			if b in battery:
+				return battery[b] / 100000
+			return 0
 
-		status = get("status")
-		energy_now = (get("energy_now", "charge_now") or 0) / 1000000
-		energy_full = get("energy_full", "charge_full") / 1000000
-		energy_design = get("energy_full_design", "charge_full_design") / 1000000
-		current = (get("power_now", "current_now") or 0) / 1000000
-		voltage_now = (get("voltage_now") or 0) / 1000000
-		voltage_design = get("voltage_min_design") / 1000000
+		status = battery["status"]
+		energy_now = get("energy_now", "charge_now")
+		energy_full = get("energy_full", "charge_full")
+		energy_design = get("energy_full_design", "charge_full_design")
+		current = get("power_now", "current_now")
+		voltage_now = get("voltage_now")
+		voltage_design = get("voltage_min_design")
 
 		self.set_tooltip_text(__import__("textwrap").dedent(f"""
 		Status: {status}
