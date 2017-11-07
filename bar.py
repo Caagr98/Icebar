@@ -71,6 +71,7 @@ def draw_bg(self, ctx, a2):
 	ctx.set_operator(cairo.OPERATOR_OVER)
 
 def __main__():
+	Keybinder.init()
 	bg, fg = create_window()
 	box = Gtk.Box()
 	fg.connect("draw", draw_bg, 1/2)
@@ -103,7 +104,6 @@ def __main__():
 	update_seps()
 
 	if config.KEYBINDING:
-		Keybinder.init()
 		def toggle_visibility(key, win):
 			win.set_visible(not win.is_visible())
 		Keybinder.bind(config.KEYBINDING, toggle_visibility, bg)

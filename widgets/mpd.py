@@ -1,4 +1,4 @@
-from gi.repository import Gtk, Gdk, GLib, Pango
+from gi.repository import Gtk, Gdk, GLib, Pango, Keybinder
 import cairo
 import os
 import os.path
@@ -129,7 +129,7 @@ class MPDClient: # {{{1
 # }}}
 
 class MPD(Gtk.EventBox):
-	def __init__(self, spacing=3):
+	def __init__(self, keys=False, spacing=3):
 		super().__init__()
 
 		self.icon = Gtk.Label()
@@ -169,6 +169,12 @@ class MPD(Gtk.EventBox):
 		self.text.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
 		self.text.connect("button-press-event", self.click_text)
 		self.ticker = None
+
+		if keys:
+			Keybinder.bind("AudioPlay", self.do_toggle)
+			Keybinder.bind("<Shift>AudioPlay", self.do_stop)
+			Keybinder.bind("AudioPrev", self.do_prev)
+			Keybinder.bind("AudioNext", self.do_next)
 
 	def search_function(self, model, column, key, rowiter, tree):
 		if key == key.lower():
@@ -255,20 +261,39 @@ class MPD(Gtk.EventBox):
 	def click_icon(self, icon, evt):
 		if evt.type != Gdk.EventType.BUTTON_PRESS: return
 		if evt.button == 1:
-			if self.mpd_state != "play":
-				self.mpd.command("play")
-			else:
-				self.mpd.command("pause")
+			self.do_toggle()
 		if evt.button == 2:
-			self.mpd.command("stop")
+			self.do_stop()
+
+	def do_toggle(self, _=0):
+		if self.mpd_state != "play":
+			self.mpd.command("play")
+		else:
+			self.mpd.command("pause")
+
+	def do_stop(self, _=0):
+		self.mpd.command("stop")
+
+	def do_prev(self, _=0):
+		def f(response):
+			if response is None: return
+			status = dict(response)
+			if "elapsed" in status and float(status["elapsed"]) < 1:
+				self.mpd.command("previous")
+			else:
+				self.mpd.command("seekcur", "0")
+		self.mpd.command("status", callback=f)
+
+	def do_next(self, _=0):
+		self.mpd.command("next")
 
 	def click_text(self, label, evt):
 		if evt.type != Gdk.EventType.BUTTON_PRESS: return
 		if evt.button == 1:
 			if evt.x < 5:
-				self.mpd.command("seekcur", "0")
+				self.do_prev()
 			elif evt.x >= label.get_allocated_width() - 5:
-				self.mpd.command("next")
+				self.do_next()
 			else:
 				self.mpd.command("seekcur", str(evt.x / label.get_allocated_width() * label.max))
 	

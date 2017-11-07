@@ -1,4 +1,4 @@
-from gi.repository import Gtk, Gdk
+from gi.repository import Gtk, Gdk, Keybinder
 import os
 import dbus
 import util
@@ -31,7 +31,7 @@ def pulse_bus_address():
 	return address
 
 class Volume(Gtk.EventBox):
-	def __init__(self, spacing=3):
+	def __init__(self, keys=False, spacing=3):
 		super().__init__()
 
 		self.icon = Gtk.Label()
@@ -65,6 +65,11 @@ class Volume(Gtk.EventBox):
 		self.pulse_bus.add_signal_receiver(self.updateVolume, "VolumeUpdated")
 		self.pulse_bus.add_signal_receiver(self.updateMute, "MuteUpdated")
 
+		if keys:
+			Keybinder.bind("AudioMute", self.toggleMute)
+			Keybinder.bind("AudioRaiseVolume", self.changeVolume, +5)
+			Keybinder.bind("AudioLowerVolume", self.changeVolume, -5)
+
 	def build_popup(self):
 		self.label = Gtk.Label()
 		self.slider = Gtk.Scale()
@@ -75,7 +80,7 @@ class Volume(Gtk.EventBox):
 		self.slider.connect("change-value", self.changeSlider)
 		self.button = Gtk.ToolButton()
 		self.button.set_halign(Gtk.Align.CENTER)
-		self.button.connect("clicked", self.clickButton)
+		self.button.connect("clicked", self.toggleMute)
 
 		self.slider.set_orientation(Gtk.Orientation.VERTICAL)
 		self.slider.set_inverted(True)
@@ -127,5 +132,10 @@ class Volume(Gtk.EventBox):
 		val = round(val / VOLUME_NORM * 100) * VOLUME_NORM / 100
 		self.default_sink.Set("org.PulseAudio.Core1.Device", "Volume", dbus.Array([int(val)], "u"), dbus_interface=PROPS)
 
-	def clickButton(self, w):
+	def toggleMute(self, _):
 		self.default_sink.Set("org.PulseAudio.Core1.Device", "Mute", not self.default_sink.Get("org.PulseAudio.Core1.Device", "Mute", dbus_interface=PROPS), dbus_interface=PROPS)
+
+	def changeVolume(self, _, d):
+		val = max(self.default_sink.Get("org.PulseAudio.Core1.Device", "Volume", dbus_interface=PROPS))
+		val = round(val / VOLUME_NORM * 100 + d) * VOLUME_NORM / 100
+		self.default_sink.Set("org.PulseAudio.Core1.Device", "Volume", dbus.Array([int(val)], "u"), dbus_interface=PROPS)
