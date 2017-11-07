@@ -18,10 +18,10 @@ def right():
 	yield widgets.IBus({"kkc": "日本語"})
 	yield widgets.Battery("/sys/class/power_supply/BAT0")
 	yield widgets.Temperature("coretemp-isa-0000", "Package id 0", 45)
-	yield widgets.Wifi("wlan0")
+	yield widgets.Wifi("wlp2s0")
 	yield widgets.RAM()
 	yield widgets.CPUGraph()
-	yield widgets.Volume()
+	yield widgets.Volume(keys=True)
 	yield widgets.Feeds(
 		widgets.RSSFeed("xkcd", "http://xkcd.com/rss.xml"),
 		widgets.RSSFeed("what-if", "http://what-if.xkcd.com/feed.atom"),
@@ -45,4 +45,4 @@ def right():
 		widgets.FFNFeed("TTHoS", 11756179),
 		widgets.FFNFeed("TAoHP,tVG:E", 9708318), # Eww, that name's ugly.
 	)
-	yield widgets.MPD()
+	yield widgets.MPD(keys=True)
