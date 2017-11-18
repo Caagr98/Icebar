@@ -18,23 +18,11 @@ class Clock(Gtk.EventBox):
 		box.show()
 		self.show()
 
-		self.build_popup()
-
 		GLib.timeout_add_seconds(1, self.update)
 		self.update()
 
 		self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
 		self.connect("button-press-event", self.click)
-
-	def build_popup(self):
-		cal = Gtk.Calendar()
-		cal.set_display_options(
-			Gtk.CalendarDisplayOptions.SHOW_WEEK_NUMBERS
-			| Gtk.CalendarDisplayOptions.SHOW_DAY_NAMES
-			| Gtk.CalendarDisplayOptions.SHOW_HEADING
-		)
-
-		self.popup = util.make_popup(cal, self)
 
 	def update(self):
 		self.text.set_text(time.strftime(self.format, time.localtime(round(time.time()))))
@@ -42,4 +30,7 @@ class Clock(Gtk.EventBox):
 
 	def click(self, _, evt):
 		if (evt.button, evt.type) == (1, Gdk.EventType.BUTTON_PRESS):
+			cal = Gtk.Calendar()
+			cal.set_display_options(Gtk.CalendarDisplayOptions.SHOW_WEEK_NUMBERS | Gtk.CalendarDisplayOptions.SHOW_DAY_NAMES | Gtk.CalendarDisplayOptions.SHOW_HEADING)
+			self.popup = util.make_popup(cal, self)
 			self.popup.show_all()

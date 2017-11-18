@@ -149,16 +149,6 @@ class MPD(Gtk.EventBox):
 		self.current_song = None
 
 		self.treestore = Gtk.TreeStore(str, str, str) # Display name, search name, filename
-		self.tree_renderer = Gtk.CellRendererText()
-		self.tree = Gtk.TreeView(self.treestore)
-		self.tree.insert_column_with_attributes(0, "Title", self.tree_renderer, text=0)
-		self.tree.set_enable_search(True)
-		self.tree.set_search_column(1)
-		self.tree.set_search_equal_func(self.search_function, self.tree)
-		self.tree.set_headers_visible(False)
-		self.tree.connect("row-activated", self.tree_activate_row)
-
-		self.popup = util.make_popup(util.framed(util.scrollable(self.tree, h=None)), self)
 
 		self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
 		self.connect("button-press-event", self.click_body)
@@ -168,7 +158,9 @@ class MPD(Gtk.EventBox):
 		self.text.set_has_window(True)
 		self.text.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
 		self.text.connect("button-press-event", self.click_text)
+
 		self.ticker = None
+		self.popup = None
 
 		if keys:
 			Keybinder.bind("AudioPlay", self.do_toggle)
@@ -300,17 +292,21 @@ class MPD(Gtk.EventBox):
 	def click_body(self, body, evt):
 		if evt.type != Gdk.EventType.BUTTON_PRESS: return
 		if evt.button == 3:
-			if self.popup.is_visible():
-				self.popup.hide()
-			else:
-				self.tree.collapse_all()
-				def walk(model, path, iter):
-					if model[iter][-1] == self.current_song:
-						self.tree.expand_to_path(path)
-						self.tree.set_cursor(path, None, False)
-				self.treestore.foreach(walk)
-				self.popup.set_default_size(0, 300)
-				self.popup.show_all()
+			tree = Gtk.TreeView(self.treestore)
+			tree.insert_column_with_attributes(0, "Title", Gtk.CellRendererText(), text=0)
+			tree.set_enable_search(True)
+			tree.set_search_column(1)
+			tree.set_search_equal_func(self.search_function, tree)
+			tree.set_headers_visible(False)
+			tree.connect("row-activated", self.tree_activate_row)
+			def walk(model, path, iter):
+				if model[iter][-1] == self.current_song:
+					tree.expand_to_path(path)
+					tree.set_cursor(path, None, False)
+			self.treestore.foreach(walk)
+			self.popup = util.make_popup(util.framed(util.scrollable(tree, h=None)), self)
+			self.popup.set_default_size(0, 300)
+			self.popup.show_all()
 
 class ProgressLabel(Gtk.Label):
 	def __init__(self):
