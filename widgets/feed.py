@@ -34,7 +34,7 @@ class Feeds(Gtk.EventBox):
 
 		self.sql = sqlite3.connect(getProfilePath() + "/places.sqlite")
 
-		self.icon = Gtk.Label()
+		self.icon = Gtk.Label("")
 		self.text = Gtk.Label()
 		box = Gtk.Box(spacing=spacing)
 		box.pack_start(self.icon, False, False, 0)
@@ -100,7 +100,7 @@ class Feeds(Gtk.EventBox):
 
 	def update(self):
 		num = sum(f.has_unread() for f,_,_,_ in self.feeds)
-		self.icon.set_text(["", ""][bool(num)])
+		self.set_opacity(0.5 if not num else 1)
 		self.text.set_text(str(num))
 		self.text.set_visible(bool(num))
 
