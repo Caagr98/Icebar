@@ -42,8 +42,8 @@ def right():
 		widgets.FFNFeed("HP&G", 11950816),
 		widgets.FFNFeed("HPMOM", 12491188),
 		widgets.FFNFeed("TCYL", 12206178),
-		widgets.FFNFeed("TTHoS", 11756179),
 		widgets.FFNFeed("TAoHP", 9708318),
 		widgets.FFNFeed("MD", 11933222),
+		widgets.FFNFeed("FDD", 8679666),
 	)
 	yield widgets.MPD(keys=True)
