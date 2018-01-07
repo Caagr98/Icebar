@@ -28,3 +28,5 @@ class Separator(Gtk.DrawingArea):
 		ctx.move_to(1, 0)
 		ctx.line_to(1, font_height)
 		ctx.stroke()
+
+		self.get_window().set_child_input_shapes()

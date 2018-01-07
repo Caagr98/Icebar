@@ -19,7 +19,6 @@ def create_strut(win):
 	curmon = screen.get_monitor_at_window(screen.get_active_window())
 	geom = screen.get_monitor_geometry(curmon)
 
-	win.realize()
 	disp = display.Display()
 	xwin = disp.create_resource_object("window", win.get_window().get_xid())
 	xwin.change_property(
@@ -34,18 +33,20 @@ def mkwin():
 	w.set_type_hint(Gdk.WindowTypeHint.DOCK)
 	w.set_decorated(False)
 	w.set_app_paintable(True)
-	w.set_visual(w.get_screen().get_rgba_visual())
-	create_strut(w)
+	w.set_visual(Gdk.Screen.get_default().get_rgba_visual())
+	w.connect("realize", create_strut)
 	return w
 
 def create_window():
 	bg = mkwin()
-	bg.set_name("background")
+	bg.set_name("bg")
 
 	screen = bg.get_screen()
 	curmon = screen.get_monitor_at_window(screen.get_active_window())
 	geom = screen.get_monitor_geometry(curmon)
 	bg.resize(geom.width, config.HEIGHT)
+	bg.realize()
+	bg.get_window().set_child_input_shapes()
 
 	fg = mkwin()
 	fg.realize()
@@ -53,8 +54,11 @@ def create_window():
 	fg.set_name("fg")
 	fg.set_transient_for(bg)
 
-	bg.connect("configure-event", lambda win, evt, to: (to.move(*win.get_position()), to.resize(*win.get_size())) and 0, fg)
+	def onresize(*args):
+		fg.move(*bg.get_position())
+		fg.resize(*bg.get_size())
 
+	bg.connect("configure-event", onresize)
 	bg.connect("show", lambda win: (fg.hide(), fg.show()))
 	bg.connect("hide", lambda win: fg.hide())
 	bg.connect("destroy", lambda win: fg.destroy())
@@ -97,6 +101,12 @@ def __main__():
 		w.connect("hide", update_seps)
 		box.pack_end(sep, False, False, 0)
 		box.pack_end(w, False, False, 4)
+
+	def set_shape(win, *_):
+		box.get_window().set_child_input_shapes()
+		fg.get_window().set_child_input_shapes()
+
+	fg.connect("draw", set_shape)
 
 	box.show()
 	bg.show()
