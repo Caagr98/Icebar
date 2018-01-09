@@ -4,6 +4,11 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Keybinder", "3.0")
 from gi.repository import Gtk, Gdk, Keybinder
 
+import os
+import sys
+sys.stdout = os.fdopen(sys.stdout.fileno(), "w", 1)
+sys.stderr = os.fdopen(sys.stderr.fileno(), "w", 1)
+
 from dbus.mainloop.glib import DBusGMainLoop
 DBusGMainLoop(set_as_default=True)
 
