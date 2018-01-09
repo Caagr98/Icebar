@@ -7,7 +7,23 @@ from gi.repository import Gtk, Gdk, Keybinder
 from dbus.mainloop.glib import DBusGMainLoop
 DBusGMainLoop(set_as_default=True)
 
-import config
+def get_config():
+	import importlib.util
+	import appdirs
+	import os.path
+	for p in [appdirs.user_config_dir("icebar.py"), os.path.expanduser("~/icebar.py")]:
+		try:
+			spec = importlib.util.spec_from_file_location("config", p)
+			config = importlib.util.module_from_spec(spec)
+			spec.loader.exec_module(config)
+			return config
+		except (FileNotFoundError, ImportError) as e:
+			pass
+	else:
+		import config
+		return config
+
+config = get_config()
 
 style_provider = Gtk.CssProvider()
 style_provider.load_from_data(config.CSS.encode())
