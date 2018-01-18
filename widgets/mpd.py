@@ -302,6 +302,7 @@ class MPD(Gtk.EventBox):
 			def walk(model, path, iter):
 				if model[iter][-1] == self.current_song:
 					tree.expand_to_path(path)
+					tree.scroll_to_cell(path, None, True, 0.5, 0.5)
 					tree.set_cursor(path, None, False)
 			self.treestore.foreach(walk)
 			self.popup = util.make_popup(util.framed(util.scrollable(tree, h=None)), self)
