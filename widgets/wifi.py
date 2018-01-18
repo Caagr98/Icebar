@@ -4,6 +4,7 @@ import fcntl
 import struct
 import array
 import ipaddress
+import util
 
 __all__ = ["Wifi"]
 
@@ -66,11 +67,11 @@ def get_mac(sock, name):
 def wifi_status(name):
 	s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 	up = get_up(s, name)
-	essid = up and get_essid(s, name)
-	quality = essid and get_quality(s, name)
-	ipv4 = essid and get_ipv4(s, name)
-	ipv6 = essid and get_ipv6(s, name)
-	mac = essid and get_mac(s, name)
+	essid = util.safely(lambda: get_essid(s, name))
+	quality = util.safely(lambda: get_quality(s, name), 0)
+	ipv4 = util.safely(lambda: get_ipv4(s, name))
+	ipv6 = util.safely(lambda: get_ipv6(s, name))
+	mac = util.safely(lambda: get_mac(s, name))
 	s.close()
 	return (up, essid, quality, ipv4, ipv6, mac)
 
@@ -123,9 +124,9 @@ class Wifi(Gtk.EventBox):
 			self.set_opacity(1)
 			self.set_has_tooltip(True)
 			self.tt_quality.set_text("{}%".format(quality))
-			self.tt_ipv4.set_text(ipv4)
-			self.tt_ipv6.set_text(ipv6)
-			self.tt_mac.set_text(mac)
+			self.tt_ipv4.set_text(ipv4 or "-")
+			self.tt_ipv6.set_text(ipv6 or "-")
+			self.tt_mac.set_text(mac or "-")
 		else:
 			self.set_opacity(0.5)
 			self.set_has_tooltip(False)

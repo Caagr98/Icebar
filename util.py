@@ -7,6 +7,12 @@ def symbol(symbols, f):
 	if f >= 1: return symbols[-1]
 	return symbols[int(len(symbols) * f)]
 
+def safely(f, default=None):
+	try:
+		return f()
+	except Exception:
+		return default
+
 def get_height(self):
 	pango = self.get_pango_context()
 	layout = Pango.Layout(pango)
