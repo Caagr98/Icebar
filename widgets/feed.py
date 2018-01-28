@@ -19,7 +19,7 @@ def clean_url(url):
 	return urlunparse(parse._replace(netloc=parse.netloc.lower()))
 
 class Feeds(Gtk.EventBox):
-	def __init__(self, hist, *feeds, spacing=3):
+	def __init__(self, hist, feeds, spacing=3):
 		super().__init__()
 
 		self.icon = Gtk.Label("")
