@@ -7,7 +7,7 @@ import sqlite3
 import util
 import webbrowser
 
-__all__ = ["Feeds", "RSSFeed", "FFNFeed", "FFHistory", "LKHistory"]
+__all__ = ["Feeds", "RSSFeed", "FFNFeed", "Firefox", "Luakit"]
 
 icon = Gtk.IconTheme.get_default().load_icon("application-rss+xml", 16, 0)
 iconGray = icon.copy()
@@ -193,7 +193,8 @@ class FFNFeed(_Feed):
 			) for opt in chap_select.find_all("option")[::-1]
 		])
 
-class FFHistory:
+
+class Firefox:
 	def __init__(self, profile=None):
 		super().__init__()
 
@@ -215,7 +216,7 @@ class FFHistory:
 		query = "SELECT url FROM moz_places WHERE url IN ({})".format(",".join(["?"] * len(urls)))
 		return {n[0] for n in self.sql.execute(query, urls)}
 
-class LKHistory:
+class Luakit:
 	def __init__(self, path=None):
 		super().__init__()
 
