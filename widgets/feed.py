@@ -7,32 +7,20 @@ import sqlite3
 import util
 import webbrowser
 
-__all__ = ["Feeds", "RSSFeed", "FFNFeed"]
+__all__ = ["Feeds", "RSSFeed", "FFNFeed", "FFHistory", "LKHistory"]
 
-def getProfilePath():
-	FF_PATH = Path("~/.mozilla/firefox").expanduser()
-
-	ini = configparser.ConfigParser()
-	ini.read(FF_PATH / "profiles.ini")
-
-	for sec in ini:
-		if "default" in ini[sec]:
-			return str(FF_PATH / ini[sec]["path"])
+icon = Gtk.IconTheme.get_default().load_icon("application-rss+xml", 16, 0)
+iconGray = icon.copy()
+iconGray.saturate_and_pixelate(iconGray, 0, False)
 
 def clean_url(url):
 	from urllib.parse import urlparse, urlunparse
 	parse = urlparse(url)
 	return urlunparse(parse._replace(netloc=parse.netloc.lower()))
 
-icon = Gtk.IconTheme.get_default().load_icon("application-rss+xml", 16, 0)
-iconGray = icon.copy()
-iconGray.saturate_and_pixelate(iconGray, 0, False)
-
 class Feeds(Gtk.EventBox):
-	def __init__(self, *feeds, spacing=3):
+	def __init__(self, hist, *feeds, spacing=3):
 		super().__init__()
-
-		self.sql = sqlite3.connect(getProfilePath() + "/places.sqlite")
 
 		self.icon = Gtk.Label("")
 		self.text = Gtk.Label()
@@ -45,6 +33,8 @@ class Feeds(Gtk.EventBox):
 		self.menu.set_take_focus(False)
 		util.popupify(self.menu.get_parent(), self)
 		self.feeds = []
+
+		self.hist = hist
 
 		for feed in feeds:
 			if feed is None:
@@ -64,7 +54,7 @@ class Feeds(Gtk.EventBox):
 			feed.connect("updated", self.feed_updated)
 			feed.fetch()
 
-		GLib.timeout_add_seconds(5, self.hist, [f for f,_,_,_ in self.feeds])
+		GLib.timeout_add_seconds(5, self.update_hist, [f for f,_,_,_ in self.feeds])
 
 		self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
 		self.connect("button-press-event", self.click)
@@ -104,12 +94,13 @@ class Feeds(Gtk.EventBox):
 		self.text.set_text(str(num))
 		self.text.set_visible(bool(num))
 
-	def hist(self, feeds):
+	def update_hist(self, feeds):
 		urls = []
 		for feed in feeds:
 			urls += (e.url for e in feed.info.entries)
-		query = "SELECT url FROM moz_places WHERE url IN ({})".format(",".join(["?"] * len(urls)))
-		visited = {n[0] for n in self.sql.execute(query, urls)}
+		print(self.hist)
+		visited = self.hist(urls)
+		print(visited)
 		for feed in feeds:
 			feed.check_hist(visited)
 		return True
@@ -151,7 +142,7 @@ class _Feed(GObject.Object):
 			status, data, etag = source.load_contents_finish(res)
 			assert status is True
 			self.info = self.load_feed(data)
-			self.parent.hist([self])
+			self.parent.update_hist([self])
 		self.file.load_contents_async(None, _on_finish)
 		return True
 
@@ -201,3 +192,35 @@ class FFNFeed(_Feed):
 				"{}/{}/{}".format(self.url, opt.get("value"), urlname)
 			) for opt in chap_select.find_all("option")[::-1]
 		])
+
+class FFHistory:
+	def __init__(self, profile=None):
+		super().__init__()
+
+		FF_PATH = Path("~/.mozilla/firefox").expanduser()
+
+		ini = configparser.ConfigParser()
+		ini.read(FF_PATH / "profiles.ini")
+
+		if profile is not None:
+			profile = ini[profile]
+		else:
+			for sec in ini:
+				if "default" in ini[sec]:
+					profile = ini[sec]
+
+		self.sql = sqlite3.connect(str(FF_PATH / profile["path"] / "places.sqlite"))
+
+	def __call__(self, urls):
+		query = "SELECT url FROM moz_places WHERE url IN ({})".format(",".join(["?"] * len(urls)))
+		return {n[0] for n in self.sql.execute(query, urls)}
+
+class LKHistory:
+	def __init__(self, path=None):
+		super().__init__()
+
+		self.sql = sqlite3.connect(str(Path("~/.local/share/luakit/history.db" if path is None else path).expanduser()))
+
+	def __call__(self, urls):
+		query = "SELECT uri FROM history WHERE uri IN ({})".format(",".join(["?"] * len(urls)))
+		return {n[0] for n in self.sql.execute(query, urls)}
