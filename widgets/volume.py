@@ -138,4 +138,5 @@ class Volume(Gtk.EventBox):
 	def changeVolume(self, _, d):
 		val = max(self.default_sink.Get("org.PulseAudio.Core1.Device", "Volume", dbus_interface=PROPS))
 		val = round(val / VOLUME_NORM * 100 + d) * VOLUME_NORM / 100
+		if val < 0: val = 0
 		self.default_sink.Set("org.PulseAudio.Core1.Device", "Volume", dbus.Array([int(val)], "u"), dbus_interface=PROPS)
