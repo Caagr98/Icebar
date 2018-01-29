@@ -98,9 +98,7 @@ class Feeds(Gtk.EventBox):
 		urls = []
 		for feed in feeds:
 			urls += (e.url for e in feed.info.entries)
-		print(self.hist)
 		visited = self.hist(urls)
-		print(visited)
 		for feed in feeds:
 			feed.check_hist(visited)
 		return True
