@@ -143,7 +143,10 @@ class _Feed(GObject.Object):
 		def _on_finish(source, res):
 			status, data, etag = source.load_contents_finish(res)
 			assert status is True
-			self.info = self.load_feed(data)
+			try:
+				self.info = self.load_feed(data)
+			except Exception as e:
+				raise Exception(f"Error loading feed {self.name} ({self.url})") from e
 			self.parent.update_hist([self])
 		self.file.load_contents_async(None, _on_finish)
 		return True
@@ -185,14 +188,15 @@ class FFNFeed(_Feed):
 		soup = bs4.BeautifulSoup(data, features="lxml")
 
 		title = soup.find(id="profile_top").find("b").text
+		urlname = soup.find("link", rel="canonical")["href"].split("/")[-1]
 		chap_select = soup.find(id="chap_select")
-		urlname = chap_select["onchange"].split()[-1][2:-2]
+		if chap_select is not None:
+			chapters = [(opt["value"], opt.text) for opt in chap_select.find_all("option")][::-1]
+		else:
+			chapters = [(1, "Only chapter")]
 
 		return FeedInfo(title, self.url, [
-			FeedEntry(
-				opt.text,
-				"{}/{}/{}".format(self.url, opt.get("value"), urlname)
-			) for opt in chap_select.find_all("option")[::-1]
+			FeedEntry(text, f"{self.url}/{idx}/{urlname}") for (idx, text) in chapters
 		])
 
 
