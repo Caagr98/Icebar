@@ -1,13 +1,14 @@
-from gi.repository import Gtk, GLib, Gio, GObject, Gdk
-from pathlib import Path
-import configparser
-import feedparser
-import bs4
-import sqlite3
+from gi.repository import Gtk, Gdk
 import util
 import subprocess
+import asyncio
+import aiohttp
+import aiosqlite
 
-__all__ = ["Feeds", "RSSFeed", "FFNFeed", "Firefox", "Luakit"]
+import configparser
+from pathlib import Path
+import feedparser
+import bs4
 
 icon = Gtk.IconTheme.get_default().load_icon("application-rss+xml", 16, 0)
 iconGray = icon.copy()
@@ -17,6 +18,12 @@ def clean_url(url):
 	from urllib.parse import urlparse, urlunparse
 	parse = urlparse(url)
 	return urlunparse(parse._replace(netloc=parse.netloc.lower()))
+
+def clean_all_urls(feed):
+	name, url, items = feed
+	return (name, clean_url(url), [(name, clean_url(url)) for (name, url) in items])
+
+browser = lambda _, url: subprocess.Popen(["xdg-open", url])
 
 class Feeds(Gtk.EventBox):
 	def __init__(self, hist, feeds, spacing=3):
@@ -29,164 +36,155 @@ class Feeds(Gtk.EventBox):
 		box.pack_start(self.text, False, False, 0)
 		self.add(box)
 
-		self.menu = Gtk.Menu()
-		self.menu.set_take_focus(False)
+		self.menu = Gtk.Menu(take_focus=False)
 		util.popupify(self.menu.get_parent(), self)
-		self.feeds = []
 
-		self.hist = hist
+		(self.sql_path, self.sql_query) = hist
 
+		self.imgs = []
+
+		self.event_fetch = asyncio.Event()
+		self.event_hist = asyncio.Event()
+
+		menus, feeds = self.build_top_menu(self.menu, feeds)
+		asyncio.ensure_future(self.run(menus, feeds))
+		asyncio.ensure_future(self.update_hist())
+
+		popup = lambda: self.menu.popup_at_widget(self, Gdk.Gravity.NORTH, Gdk.Gravity.SOUTH)
+		self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+		self.connect("button-press-event", lambda _, e: (e.type, e.button) == (Gdk.EventType.BUTTON_PRESS, 1) and popup())
+		self.connect("button-press-event", lambda _, e: (e.type, e.button) == (Gdk.EventType.BUTTON_PRESS, 3) and print(self.event_fetch.set(False)))
+
+	async def run(self, menus, feeds):
+		async def load_feed(session, feed):
+			async with session.get(feed.url) as response:
+				return feed(await response.text())
+
+		assert len(feeds) == len(menus)
+
+		async with aiohttp.ClientSession() as session:
+			while True:
+				feeds_ = await asyncio.gather(*(load_feed(session, feed) for feed in feeds), return_exceptions=True)
+				self.imgs = []
+				for menu, feed in zip(menus, feeds_):
+					if isinstance(feed, BaseException):
+						menu.set_image(None)
+						menu.set_submenu(None)
+					else:
+						submenu, img = self.build_menu(clean_all_urls(feed))
+						menu.set_image(img)
+						menu.set_submenu(submenu)
+
+				self.event_hist.set()
+				await asyncio.wait([self.event_fetch.wait()], timeout=60*60)
+				self.event_fetch.clear()
+
+	async def update_hist(self):
+		async with aiosqlite.connect(self.sql_path) as db:
+			while True:
+				urls = {url for img, url, top in self.imgs}
+				query = self.sql_query.format(",".join("?" for _ in urls))
+				visited = set()
+
+				cursor = await db.cursor()
+				await cursor.execute(query, list(urls))
+				for (url,) in await cursor.fetchall():
+					visited.add(url)
+
+				num = 0
+				for img, url, top in self.imgs:
+					if url in visited:
+						img.set_from_pixbuf(iconGray)
+					else:
+						img.set_from_pixbuf(icon)
+						num += top
+
+				self.set_opacity(0.5 if not num else 1)
+				self.text.set_text(str(num))
+				self.text.set_visible(bool(num))
+
+				await asyncio.wait([self.event_hist.wait()], timeout=5)
+				self.event_hist.clear()
+
+	def build_top_menu(self, menu, feeds):
+		menus = []
+		feeds2 = []
 		for feed in feeds:
 			if feed is None:
-				self.menu.add(Gtk.SeparatorMenuItem())
+				menu.add(Gtk.SeparatorMenuItem())
 				continue
-			feed.num = len(self.feeds)
-			menu = Gtk.Menu()
-			image = Gtk.Image()
-			menuitem = Gtk.ImageMenuItem.new_with_label(feed.name)
-			menuitem.set_always_show_image(True)
-			menuitem.set_image(image)
-			menuitem.set_submenu(menu)
-			self.menu.add(menuitem)
-			self.feeds.append((feed, image, menuitem, menu))
+			menuitem = Gtk.ImageMenuItem(label=feed.name, always_show_image=True)
+			menuitem.show()
+			menu.add(menuitem)
+			menus.append(menuitem)
+			feeds2.append(feed)
+		return menus, feeds2
 
-			feed.parent = self
-			feed.connect("updated", self.feed_updated)
-			feed.fetch()
-
-		GLib.timeout_add_seconds(5, self.update_hist, [f for f,_,_,_ in self.feeds])
-
-		self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-		self.connect("button-press-event", self.click)
-
-		GLib.idle_add(self.update, priority=200)
-
-	def feed_updated(self, feed):
-		_, image, menuitem, menu = self.feeds[feed.num]
-
-		for child in menu.get_children():
-			menu.remove(child)
-
-		browserOpen = lambda item, url: subprocess.Popen(["xdg-open", url])
-		image.set_from_pixbuf([icon, iconGray][not feed.has_unread()])
-
-		menuitem = Gtk.MenuItem()
-		menuitem.set_label(feed.title or feed.info.name)
-		menuitem.connect("activate", browserOpen, feed.info.url)
+	def build_menu(self, feed):
+		img = Gtk.Image()
+		if feed[2]:
+			self.imgs.append((img, feed[2][0][1], True))
+		menu = Gtk.Menu()
+		menuitem = Gtk.MenuItem(label=feed[0])
+		menuitem.connect("activate", browser, feed[1])
 		menu.add(menuitem)
 		menu.add(Gtk.SeparatorMenuItem())
+		for e in feed[2][:15]:
+			img2 = Gtk.Image()
+			mitem = Gtk.ImageMenuItem(label=e[0], always_show_image=True, image=img2)
+			mitem.connect("activate", browser, e[1])
+			self.imgs.append((img2, e[1], False))
+			menu.add(mitem)
+		menu.show_all()
+		return menu, img
 
-		for e in feed.info.entries:
-			menuitem = Gtk.ImageMenuItem()
-			menuitem.set_label(feed.titlefmt(e.name))
-			menuitem.set_always_show_image(True)
-			menuitem.set_image(Gtk.Image.new_from_pixbuf([icon, iconGray][e.visited]))
-			menuitem.connect("activate", browserOpen, e.url)
-			menu.add(menuitem)
-
-		self.menu.show_all()
-
-		self.update()
-
-	def update(self):
-		num = sum(f.has_unread() for f,_,_,_ in self.feeds)
-		self.set_opacity(0.5 if not num else 1)
-		self.text.set_text(str(num))
-		self.text.set_visible(bool(num))
-
-	def update_hist(self, feeds):
-		urls = []
-		for feed in feeds:
-			urls += (e.url for e in feed.info.entries)
-		visited = self.hist(urls)
-		for feed in feeds:
-			feed.check_hist(visited)
-		return True
-
-	def click(self, _, evt):
-		if (evt.button, evt.type) == (1, Gdk.EventType.BUTTON_PRESS):
-			self.menu.popup_at_widget(self, Gdk.Gravity.NORTH, Gdk.Gravity.SOUTH)
-		print(evt.button)
-		if (evt.button, evt.type) == (2, Gdk.EventType.BUTTON_PRESS):
-			for feed in self.feeds:
-				feed[0].fetch()
-
-class FeedInfo:
-	def __init__(self, name, url, entries):
-		self.name = name
-		self.url = clean_url(url)
-		self.entries = entries[:15]
-class FeedEntry:
+class Feed:
 	def __init__(self, name, url):
 		self.name = name
-		self.url = clean_url(url)
-		self.visited = False
-
-class _Feed(GObject.Object):
-	def __init__(self, name, url, titlefmt=lambda l: l, title=None):
-		super().__init__()
-		self.name = name
 		self.url = url
-		self.file = Gio.File.new_for_uri(self.url)
-		self.titlefmt = titlefmt
-		self.title = title
 
-		self.info = FeedInfo(f"<{name}>", "", [])
-		self.sql = None # Filled out by Feeds
+	def __call__(self, data): raise NotImplementedError()
 
-		GLib.timeout_add_seconds(3600, self.fetch)
+	def map(self, f):
+		return Fmap(self, f)
 
-	@GObject.Signal
-	def updated(self): pass
+class Fmap(Feed):
+	def __init__(self, feed, f):
+		super().__init__(feed.name, feed.url)
+		self.f = f
+		self.g = feed
 
-	def fetch(self):
-		def _on_finish(source, res):
-			status, data, etag = source.load_contents_finish(res)
-			assert status is True
-			try:
-				self.info = self.load_feed(data)
-			except Exception as e:
-				raise Exception(f"Error loading feed {self.name} ({self.url})") from e
-			self.parent.update_hist([self])
-		self.file.load_contents_async(None, _on_finish)
-		return True
+	def __call__(self, data):
+		return self.f(self.g(data))
 
-	def check_hist(self, visited):
-		for entry in self.info.entries:
-			entry.visited = entry.url in visited
-		self.emit("updated")
+class RSSFeed(Feed):
+	def __init__(self, name, url):
+		super().__init__(name, url)
+		self.funcs = [self._unburn]
 
-	def load_feed(self, data):
-		raise NotImplementedError()
-
-	def has_unread(self):
-		return bool(self.info.entries) and not self.info.entries[0].visited
-
-	def __repr__(self):
-		return f"{type(self).__name__}({self.name!r}, {self.url!r})"
-
-class RSSFeed(_Feed):
-	def __init__(self, name, url, match=lambda e: True, **kwargs):
-		super().__init__(name=name, url=url, **kwargs)
-		self._match = match
-
-	def load_feed(self, data):
-		entries = []
-		feed = feedparser.parse(data) # TODO I think this is slow.
+	def _unburn(self, feed):
 		for e in feed.entries:
 			if hasattr(e, "feedburner_origlink"):
 				e.link = e.feedburner_origlink
-			if self._match(e):
-				entries.append(FeedEntry(e.title, e.link))
-		return FeedInfo(feed.feed.title, feed.feed.link, entries)
 
-class FFNFeed(_Feed):
-	def __init__(self, name, id, **kwargs):
-		super().__init__(name=name, url="https://www.fanfiction.net/s/{}".format(id), **kwargs)
+	def __call__(self, data):
+		feed = feedparser.parse(data)
+		[f(feed) for f in self.funcs]
+		entries = []
+		for e in feed.entries:
+			entries.append((e.title, e.link))
+		return (feed.feed.title, feed.feed.link, entries)
 
-	def load_feed(self, data):
+	def premap(self, func):
+		self.funcs.append(func)
+		return self
+
+class FFNFeed(Feed):
+	def __init__(self, name, id):
+		super().__init__(name=name, url="https://www.fanfiction.net/s/{}".format(id))
+
+	def __call__(self, data):
 		soup = bs4.BeautifulSoup(data, features="lxml")
-
 		title = soup.find(id="profile_top").find("b").text
 		urlname = soup.find("link", rel="canonical")["href"].split("/")[-1]
 		chap_select = soup.find(id="chap_select")
@@ -195,39 +193,29 @@ class FFNFeed(_Feed):
 		else:
 			chapters = [(1, "Only chapter")]
 
-		return FeedInfo(title, self.url, [
-			FeedEntry(text, f"{self.url}/{idx}/{urlname}") for (idx, text) in chapters
+		return (title, self.url, [
+			(text, f"{self.url}/{idx}/{urlname}")
+			for (idx, text) in chapters
 		])
 
+def Firefox(profile=None):
+	FF_PATH = Path("~/.mozilla/firefox").expanduser()
 
-class Firefox:
-	def __init__(self, profile=None):
-		super().__init__()
+	ini = configparser.ConfigParser()
+	ini.read(FF_PATH / "profiles.ini")
 
-		FF_PATH = Path("~/.mozilla/firefox").expanduser()
+	if profile is not None:
+		profile = ini[profile]
+	else:
+		for sec in ini:
+			if "default" in ini[sec]:
+				profile = ini[sec]
 
-		ini = configparser.ConfigParser()
-		ini.read(FF_PATH / "profiles.ini")
+	sql = str(FF_PATH / profile["path"] / "places.sqlite")
+	query = "SELECT url FROM moz_places WHERE url IN ({})"
+	return sql, query
 
-		if profile is not None:
-			profile = ini[profile]
-		else:
-			for sec in ini:
-				if "default" in ini[sec]:
-					profile = ini[sec]
-
-		self.sql = sqlite3.connect(str(FF_PATH / profile["path"] / "places.sqlite"))
-
-	def __call__(self, urls):
-		query = "SELECT url FROM moz_places WHERE url IN ({})".format(",".join(["?"] * len(urls)))
-		return {n[0] for n in self.sql.execute(query, urls)}
-
-class Luakit:
-	def __init__(self, path=None):
-		super().__init__()
-
-		self.sql = sqlite3.connect(str(Path("~/.local/share/luakit/history.db" if path is None else path).expanduser()))
-
-	def __call__(self, urls):
-		query = "SELECT uri FROM history WHERE uri IN ({})".format(",".join(["?"] * len(urls)))
-		return {n[0] for n in self.sql.execute(query, urls)}
+def Luakit(path=None):
+	sql = str(Path("~/.local/share/luakit/history.db" if path is None else path).expanduser())
+	query = "SELECT uri FROM history WHERE uri IN ({})"
+	return sql, query
