@@ -11,6 +11,8 @@ sys.stderr = os.fdopen(sys.stderr.fileno(), "w", 1)
 
 from dbus.mainloop.glib import DBusGMainLoop
 DBusGMainLoop(set_as_default=True)
+import gbulb
+gbulb.install(gtk=True)
 
 def get_config():
 	import importlib.util
@@ -144,6 +146,10 @@ def __main__():
 		Keybinder.bind(config.KEYBINDING, toggle_visibility, bg)
 
 	from gi.repository import GLib
-	GLib.MainLoop().run()
+	try:
+		loop = GLib.MainLoop()
+		loop.run()
+	except KeyboardInterrupt:
+		os._exit(0)
 
 if __name__ == "__main__": __main__()
