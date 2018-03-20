@@ -89,10 +89,8 @@ class Wifi(Gtk.EventBox):
 
 		self.tooltip = Gtk.Grid()
 		def row(l, i):
-			left = Gtk.Label(l)
-			right = Gtk.Label()
-			left.set_xalign(0)
-			right.set_xalign(1)
+			left = Gtk.Label(l, xalign=0)
+			right = Gtk.Label(xalign=1)
 			self.tooltip.attach(left, 0, i, 1, 1)
 			self.tooltip.attach(right, 1, i, 1, 1)
 			return right
