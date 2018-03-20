@@ -12,7 +12,9 @@ try: from .ram import *
 except ImportError: pass
 try: from .cpugraph import *
 except ImportError: pass
-try: from .volume import *
+try: from .volume_pulse import *
+except ImportError: pass
+try: from .volume_alsa import *
 except ImportError: pass
 try: from .feed import *
 except ImportError: pass
