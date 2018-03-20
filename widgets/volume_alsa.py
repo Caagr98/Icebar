@@ -1,5 +1,4 @@
-from gi.repository import GLib
-from .volume import Volume
+from gi.repository import Gtk, Gdk, GLib, Keybinder
 import ctypes as c
 import struct
 
@@ -68,9 +67,22 @@ elem_set_callback = fn(asound.snd_mixer_elem_set_callback, None, selemp, elem_ca
 handle_events = fn(asound.snd_mixer_handle_events, mixp)
 
 
-class AlsaVolume(Volume):
-	def __init__(self, card="hw:0", name="Master", id=0, base=80, *args, **kwargs):
-		super().__init__(*args, **kwargs)
+class AlsaVolume(Gtk.EventBox):
+	def __init__(self, card="hw:0", name="Master", id=0, base=80, keys=False, spacing=3):
+		super().__init__()
+
+		self.icon = Gtk.Label()
+		self.text = Gtk.Label()
+		box = Gtk.Box(spacing=spacing)
+		box.pack_start(self.icon, False, False, 0)
+		box.pack_start(self.text, False, False, 0)
+		self.add(box)
+
+		self.icon.show()
+		self.text.show()
+		box.show()
+		self.show()
+
 		self.base = base
 
 		self.handle = c.c_void_p()
@@ -94,10 +106,22 @@ class AlsaVolume(Volume):
 		for a in fds:
 			GLib.io_add_watch(a.fd, GLib.IO_IN, lambda *_: handle_events(self.handle) or self.update() or True)
 
+		if keys:
+			Keybinder.bind("AudioMute", lambda _: self.setMute(not self.getMute()))
+			Keybinder.bind("AudioRaiseVolume", lambda _: self.changeVolume(+2))
+			Keybinder.bind("AudioLowerVolume", lambda _: self.changeVolume(-2))
+
 	def update(self, *_):
 		self.updateVolume()
 		self.updateMute()
 		return False
+
+	def updateVolume(self):
+		self.text.set_text("{:.1f} dB".format(self.getVolume_() / 100 + self.base))
+		self.icon.set_text("♪")
+
+	def updateMute(self):
+		self.set_opacity(0.5 if self.getMute() else 1)
 
 	def getMute(self):
 		a = []
@@ -137,8 +161,3 @@ class AlsaVolume(Volume):
 
 	def changeVolume(self, d):
 		self.setVolume_(self.getVolume_() + d * 250)
-
-	def updateVolume(self):
-		super().updateVolume()
-		vol = self.getVolume_()
-		self.text.set_markup("{:.1f}<small><small> </small></small>dB".format(vol/100+self.base))
