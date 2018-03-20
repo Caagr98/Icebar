@@ -77,29 +77,35 @@ class MPDClient: # {{{1
 
 	def _on_input(self, source, state):
 		assert source == self
-		self.input += os.read(self.fileno(), 1<<16)
-		while True:
-			idx = self.input.find(ord("\n"))
-			if idx == -1:
-				break
-			line = self.input[:idx].decode("utf-8")
-			self.input = self.input[idx+1:]
-			if not self.header:
-				assert line == "OK MPD 0.20.0"
-				self.header = True
-				self.response = []
-				if self.on_connect:
-					self.on_connect()
-				continue
-			assert not line.startswith("ACK ")
-			if line == "OK":
-				callback = self.queue.popleft()
-				if callback is not None:
-					GLib.idle_add(callback, self.response, priority=100)
-				self.response = []
-				continue
-			k, v = line.split(": ", 1)
-			self.response.append((k, v))
+		try:
+			self.input += os.read(self.fileno(), 1<<16)
+		except socket.ConnectionResetError as e:
+			print(e)
+		else:
+			while True:
+				idx = self.input.find(ord("\n"))
+				if idx == -1:
+					break
+				line = self.input[:idx].decode("utf-8")
+				self.input = self.input[idx+1:]
+				if not self.header:
+					assert line == "OK MPD 0.20.0"
+					self.header = True
+					self.response = []
+					if self.on_connect:
+						self.on_connect()
+					continue
+				if line.startswith("ACK "):
+					print(line)
+					return True
+				if line == "OK":
+					callback = self.queue.popleft()
+					if callback is not None:
+						GLib.idle_add(callback, self.response, priority=100)
+					self.response = []
+					continue
+				k, v = line.split(": ", 1)
+				self.response.append((k, v))
 		return True
 
 	def fileno(self):
