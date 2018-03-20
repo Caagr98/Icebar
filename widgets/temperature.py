@@ -5,9 +5,31 @@ import util
 
 __all__ = ["Temperature"]
 
-input_re = re.compile(r"^  temp\d+_input: (\d+\.\d+)$")
-max_re = re.compile(r"^  temp\d+_max: (\d+\.\d+)$")
-crit_re = re.compile(r"^  temp\d+_crit: (\d+\.\d+)$")
+input_re = re.compile(r"^  (\w+)(\d+)_(\w+): (\d+\.\d+)$")
+
+
+def get_temps():
+	out = subprocess.check_output(["sensors", "-u"]).decode()
+	it = iter(out.splitlines())
+	for chip in it:
+		adapter = next(it)
+		assert adapter.startswith("Adapter: ")
+		adapter = adapter[9:]
+
+		sensors = []
+		for l in it:
+			if not l: break
+			if l[-1:] == ":":
+				sensors.append({"name": l[:-1]})
+			else:
+				match = input_re.match(l)
+				if not match: raise ValueError(l)
+				type, n, key, val = match.groups()
+				n = int(n) - 1
+
+				sensors[-1]["type"] = type
+				sensors[-1][key] = float(val)
+		yield chip, adapter, sensors
 
 class Temperature(Gtk.EventBox):
 	def __init__(self, chip, which, idle, crit=None, spacing=3):
@@ -26,8 +48,28 @@ class Temperature(Gtk.EventBox):
 
 		GLib.timeout_add_seconds(1, self.update)
 		self.update()
-		self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-		self.connect("button-press-event", self.click)
+
+		def tooltip(self, x, y, keyboard, tooltip):
+			self.tooltip = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+			for chip, adapter, sensors in get_temps():
+				label = Gtk.Label(xalign=0)
+				label.set_markup(f"<b>{chip}</b>: <i>{adapter}</i>")
+				self.tooltip.pack_start(label, True, True, 0)
+
+				for sensor in sensors:
+					format = {"temp": "{:.1f} °C", "fan": "{:.0f} RPM"}.get(sensor["type"], "{}")
+					left = Gtk.Label(sensor["name"])
+					right = Gtk.Label(format.format(sensor["input"]))
+					box = Gtk.Box(spacing=7)
+					box.pack_start(left, False, False, 15)
+					box.pack_end(right, False, False, 15)
+					self.tooltip.pack_start(box, True, True, 0)
+
+			self.tooltip.show_all()
+			tooltip.set_custom(self.tooltip)
+			return True
+		self.connect("query-tooltip", tooltip)
+		self.set_has_tooltip(True)
 
 		self.icon.show()
 		self.text.show()
@@ -35,30 +77,16 @@ class Temperature(Gtk.EventBox):
 		self.show()
 
 	def update(self):
-		out = subprocess.check_output(["sensors", "-uA", self.chip]).decode().splitlines()[1:]
-		temp = None
-		crit = self.crit
-		for line in out:
-			if line.endswith(":"):
-				which = line[:-1]
-			elif which == self.which:
-				if not temp:
-					_input = input_re.match(line)
-					if _input:
-						temp = float(_input.group(1))
-				if not crit:
-					_max = max_re.match(line)
-					if _max:
-						crit = float(_max.group(1))
-				if not crit:
-					_crit = crit_re.match(line)
-					if _crit:
-						crit = float(_crit.group(1))
+		sensor = None
+		for chip, adapter, sensors in get_temps():
+			if chip == self.chip:
+				for sensor in sensors:
+					if sensor["name"] == self.which:
+						break
 
+		crit = sensor.get("crit", self.crit)
+		temp = sensor.get("input", 0.0)
 		self.icon.set_text(util.symbol(["", "", "", "", ""], (temp-self.idle)/(crit-self.idle)))
 		self.text.set_text("{:.0f}°C".format(temp))
 
 		return True
-
-	def click(self, _, evt):
-		pass
