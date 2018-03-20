@@ -152,6 +152,7 @@ class MPD(Gtk.EventBox):
 		self.mpd = MPDClient(on_connect=self.on_connect)
 		self.mpd.connect()
 		self.mpd_state = None
+		self.random = None
 		self.current_song = None
 
 		self.treestore = Gtk.TreeStore(str, str, str) # Display name, search name, filename
@@ -172,7 +173,9 @@ class MPD(Gtk.EventBox):
 			Keybinder.bind("AudioPlay", self.do_toggle)
 			Keybinder.bind("<Shift>AudioPlay", self.do_stop)
 			Keybinder.bind("AudioPrev", self.do_prev)
+			Keybinder.bind("<Shift>AudioPrev", self.do_prev2)
 			Keybinder.bind("AudioNext", self.do_next)
+			Keybinder.bind("<Shift>AudioNext", self.do_next2)
 
 	def search_function(self, model, column, key, rowiter, tree):
 		if key == key.lower():
@@ -221,6 +224,7 @@ class MPD(Gtk.EventBox):
 		if response is None: return
 		status = dict(response)
 		self.mpd_state = status["state"]
+		self.random = int(status["random"])
 		self.icon.set_text({"play": "", "pause": "", "stop": ""}[self.mpd_state])
 		self.text.set_visible(self.mpd_state != "stop")
 		self.set_opacity(1 if self.mpd_state != "stop" else 0.25)
@@ -281,9 +285,23 @@ class MPD(Gtk.EventBox):
 			else:
 				self.mpd.command("seekcur", "0")
 		self.mpd.command("status", callback=f)
+		self.mpd.command(self.mpd_state)
+
+	def do_prev2(self, _=0):
+		self.mpd.command(f"random {1-self.random}")
+		self.mpd.command("previous")
+		self.mpd.command(f"random {self.random}")
+		self.mpd.command(self.mpd_state)
 
 	def do_next(self, _=0):
 		self.mpd.command("next")
+		self.mpd.command(self.mpd_state)
+
+	def do_next2(self, _=0):
+		self.mpd.command(f"random {1-self.random}")
+		self.mpd.command("next")
+		self.mpd.command(f"random {self.random}")
+		self.mpd.command(self.mpd_state)
 
 	def click_text(self, label, evt):
 		if evt.type != Gdk.EventType.BUTTON_PRESS: return
