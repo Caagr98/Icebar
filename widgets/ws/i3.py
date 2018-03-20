@@ -78,7 +78,8 @@ class i3ipc(GObject.Object):
 				self.type = int.from_bytes(skip(4), "little")
 				self.state = 1
 			if self.state == 1 and len(self.inbuf) >= self.length:
-				payload = json.loads(skip(self.length))
+				s = skip(self.length)
+				payload = json.loads(s)
 				if self.type & 0x80000000:
 					self.emit("event", self.type & 0x7FFFFFFF, payload)
 				else:
@@ -134,10 +135,11 @@ class i3(WSProvider):
 	def get_workspaces(self, workspaces):
 		ws = []
 		for w in workspaces:
-			c = 0
-			if w["visible"]: c = 1
-			if w["focused"]: c = 2
-			if w["urgent"]: c = 3
+			c = {
+				"focused": w["focused"],
+				"focused-other": w["visible"],
+				"urgent": w["urgent"],
+			}
 			ws.append((w["name"], c))
 		self.emit("workspaces", ws)
 

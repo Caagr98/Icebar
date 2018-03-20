@@ -22,16 +22,16 @@ class Workspaces(Gtk.Box):
 		self.buttons = {}
 		self.active_color = (0, 0, 0, 0)
 
-	def update_color(self, provider, color):
+	def update_color(self, _, color):
 		for button in self.buttons.values():
 			button.set_color(color)
 		self.active_color = color
 
-	def update_workspaces(self, provider, workspaces):
+	def update_workspaces(self, _, workspaces):
 		current = {a[0] for a in workspaces}
 		for name in list(self.buttons):
 			if name not in current:
-				self.remove(self.buttons[name])
+				self.buttons[name].destroy()
 				del self.buttons[name]
 		for i, (name, state) in enumerate(workspaces):
 			if name not in self.buttons:
@@ -43,6 +43,9 @@ class Workspaces(Gtk.Box):
 			self.reorder_child(self.buttons[name], i)
 
 PADDING = 4
+
+def blend(a, b, r):
+	return tuple(a*(1-r) + b*r for (a, b) in zip(a, b))
 
 class WorkspaceButton(Gtk.DrawingArea):
 	@GObject.Signal
@@ -75,8 +78,7 @@ class WorkspaceButton(Gtk.DrawingArea):
 
 	def set_color(self, color):
 		self.active_color = tuple(color)
-		if self.state == 2:
-			self.queue_draw()
+		self.queue_draw()
 
 	def draw(self, _, ctx):
 		ctx.set_antialias(cairo.ANTIALIAS_NONE)
@@ -90,40 +92,45 @@ class WorkspaceButton(Gtk.DrawingArea):
 		w = self.get_allocated_width()
 		h = self.get_allocated_height()
 
-		bg, border, text = None, None, None
+		bg = None
+		border = (r,g,b,a/8)
+		text = (r,g,b,a/2)
+		borderWidth = 1
 
-		if self.state == 0:
-			border = (r, g, b, a/8)
-			text = (r, g, b, a/2)
-		if self.state == 1:
-			border = (r, g, b, a/4)
-			text = (r, g, b, a)
-		if self.state == 2:
+		if self.state["focused-other"]:
+			border = (r,g,b,a/4)
+			text = (r,g,b,a)
+		if self.state["focused"]:
 			bg = self.active_color
-			ar,ag,ab,aa = self.active_color
-			border = ((r+ar*5)/6, (g+ag*5)/6, (b+ab*5)/6, 1)
-			text = (r, g, b, a)
-		if self.state == 3:
-			bg = (2/3, 0, 0, 1)
-			border = (r, g, b, a/8)
-			text = (r, g, b, a)
+			border = blend(bg, (r,g,b,a), 1/6)
+			text = (r,g,b,a)
+		if self.state["urgent"]:
+			border = (2/3, 1/6, 1/6, 1)
+			bg = blend(bg or border[0:3] + (0,), border, 1/2)
+			text = blend((r,g,b,a), border, 1/4)
 
+		bw = borderWidth
 		if bg:
 			ctx.set_source_rgba(*bg)
-			ctx.move_to(1, 2)
-			ctx.line_to(1, h-2)
-			ctx.line_to(w-1, h-2)
-			ctx.line_to(w-1, 2)
+			ctx.move_to(bw, 1+bw)
+			ctx.line_to(bw, h-1-bw)
+			ctx.line_to(w-bw, h-1-bw)
+			ctx.line_to(w-bw, 1+bw)
 			ctx.close_path()
 			ctx.fill()
 		if border:
 			ctx.set_source_rgba(*border)
-			ctx.move_to(.5, 1.5)
-			ctx.line_to(.5, h-1.5)
-			ctx.line_to(w-.5, h-1.5)
-			ctx.line_to(w-.5, 1.5)
+			ctx.move_to(0, 1)
+			ctx.line_to(0, h-1)
+			ctx.line_to(w, h-1)
+			ctx.line_to(w, 1)
 			ctx.close_path()
-			ctx.stroke()
+			ctx.move_to(w-bw, 1+bw)
+			ctx.line_to(w-bw, h-1-bw)
+			ctx.line_to(bw, h-1-bw)
+			ctx.line_to(bw, 1+bw)
+			ctx.close_path()
+			ctx.fill()
 		if text:
 			ctx.set_source_rgba(*text)
 			pango = self.get_pango_context()
