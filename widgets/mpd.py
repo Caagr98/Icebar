@@ -1,13 +1,60 @@
-from gi.repository import Gtk, Gdk, GLib, Pango, Keybinder
+from gi.repository import Gtk, Gdk, Pango, Keybinder
 import cairo
 import os
 import os.path
-import socket
-import collections
+import asyncio
 import re
+import enum
 import util
 
-__all__ = ["MPD"]
+class MPDClosedError(Exception): pass
+class MPDError(Exception): pass
+
+host = os.getenv("MPD_HOST", "localhost")
+port = os.getenv("MPD_PORT", None)
+
+class MpdClient:
+	async def __aenter__(self):
+		try:
+			r, w = await asyncio.open_unix_connection(host)
+		except ConnectionRefusedError:
+			raise MPDClosedError("Couldn't connect to MPD")
+		if await r.readline() != b'OK MPD 0.20.0\n':
+			raise MPDClosedError("Wrong magic!")
+		self.r, self.w = r, w
+		return self
+
+	async def __aexit__(self, exc_type, exc, tb):
+		self.w.write_eof()
+
+	async def send(self, command, *args):
+		escape = lambda s: "".join("\\"[c not in '\\"':] + c for c in s)
+		words = [command] + [f'"{escape(a)}"' for a in args]
+		self.w.write(" ".join(words).encode() + b"\n")
+
+	async def recv(self):
+		response = []
+		while True:
+			data = await self.r.readline()
+			if not data and self.r.at_eof():
+				raise MPDClosedError("Connection closed")
+			line = data.decode().rstrip("\n")
+			if line.startswith("ACK "):
+				raise MPDError(line)
+			if line == "OK":
+				return response
+			response.append(tuple(line.split(": ", 1)))
+
+	async def __call__(self, *command):
+		await self.send(*command)
+		return await self.recv()
+
+	async def list(self, commands):
+		for command in commands:
+			await self.send(*command)
+		return await self.recv()
+
+__all__ = ["MPD2"]
 
 def stripfname(title, num=False):
 	title = os.path.basename(title)
@@ -29,112 +76,83 @@ def gettitle(track, num=False):
 		title = "<Unknown>"
 	return title
 
-class MPDClient: # {{{1
-	def __init__(self, *, on_connect=None):
-		self.host = os.getenv("MPD_HOST", "localhost")
-		self.port = os.getenv("MPD_PORT", None)
-		self.on_connect = on_connect
-		self._reset()
+class MpdState(enum.IntEnum):
+	error = 0
+	stop = 1
+	pause = 2
+	play = 3
 
-	def _reset(self):
-		self.sock = None
-		self.queue = collections.deque()
-		self.header = False
-		self.input = b""
-		self.output = b""
-		self._source_in = None
-		self._source_err = None
-		self._source_out = None
+def run_mpd(f, *args):
+	async def coro():
+		async with MpdClient() as mpd:
+			return await f(mpd, *args)
+	return asyncio.ensure_future(coro())
 
-	def connect(self):
-		assert self.host[:1] == "/" # Currently only support unix sockets
-		self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-		try:
-			self.sock.connect(self.host)
-		except ConnectionRefusedError:
-			print("Failed to connect to MPD :(")
-			GLib.timeout_add_seconds(1, self.connect)
-			return
-		self._source_in = GLib.io_add_watch(self, GLib.IO_IN, self._on_input)
-		self._source_err = GLib.io_add_watch(self, GLib.IO_ERR | GLib.IO_HUP, self._on_connection_lost)
+def run_mpd_sync(f, *args):
+	async def coro():
+		async with MpdClient() as mpd:
+			return await f(mpd, *args)
+	return asyncio.get_event_loop().run_until_complete(coro())
 
-	def disconnect(self):
-		if self._source_in is not None: GLib.source_remove(self._source_in)
-		if self._source_err is not None: GLib.source_remove(self._source_err)
-		if self._source_out is not None: GLib.source_remove(self._source_out)
-		self.sock.close()
-		for a in self.queue:
-			if a is not None:
-				a(None)
-		self._reset()
+class save_state:
+	def __init__(self, mpd):
+		self.mpd = mpd
+	async def __aenter__(self):
+		self.status = dict(await self.mpd("status"))
+		print(self.status)
+		return self.status
 
-	def _on_connection_lost(self, source, state):
-		assert source == self
-		print("Connection to MPD lost, attempting to reestablish")
-		self.disconnect()
-		self.connect()
-		return False
+	async def __aexit__(self, exc_type, exc, tb):
+		await self.mpd.list([
+			{
+				"stop": ["stop"],
+				"pause": ["pause", "1"],
+				"play": ["pause", "0"],
+			}[self.status["state"]],
+			["repeat", self.status["repeat"]],
+			["random", self.status["random"]],
+			["single", self.status["single"]],
+			["consume", self.status["consume"]],
+		])
 
-	def _on_input(self, source, state):
-		assert source == self
-		try:
-			self.input += os.read(self.fileno(), 1<<16)
-		except socket.ConnectionResetError as e:
-			print(e)
+async def do_toggle(mpd):
+	state = dict(await mpd("status"))["state"]
+	if state != "play":
+		await mpd("play")
+	else:
+		await mpd("pause")
+
+async def do_stop(mpd):
+	await mpd("stop")
+
+async def do_prev(mpd):
+	async with save_state(mpd) as status:
+		if float(status.get("elapsed", 1e10)) < 1:
+			await mpd("previous")
 		else:
-			while True:
-				idx = self.input.find(ord("\n"))
-				if idx == -1:
-					break
-				line = self.input[:idx].decode("utf-8")
-				self.input = self.input[idx+1:]
-				if not self.header:
-					assert line == "OK MPD 0.20.0"
-					self.header = True
-					self.response = []
-					if self.on_connect:
-						self.on_connect()
-					continue
-				if line.startswith("ACK "):
-					print(line)
-					return True
-				if line == "OK":
-					callback = self.queue.popleft()
-					if callback is not None:
-						GLib.idle_add(callback, self.response, priority=100)
-					self.response = []
-					continue
-				k, v = line.split(": ", 1)
-				self.response.append((k, v))
-		return True
+			await mpd("seekcur", "0")
 
-	def fileno(self):
-		return self.sock.fileno()
+async def do_prev2(mpd):
+	async with save_state(mpd) as status:
+		await mpd("random", str(1-int(status["random"])))
+		await mpd("previous")
 
-	def command(self, command, *args, callback=None):
-		self.queue.append(callback)
-		s = []
-		s.append("noidle\n")
-		s.append(command)
-		for a in args:
-			s.append(' "')
-			s.append(a.replace('\\', '\\\\').replace('"', '\\"'))
-			s.append('"')
-		s.append("\n")
-		self.output += "".join(s).encode()
-		self._source_out = GLib.io_add_watch(self, GLib.IO_OUT, self._on_output)
+async def do_next(mpd):
+	async with save_state(mpd):
+		await mpd("next")
 
-	def _on_output(self, source, state):
-		n = os.write(self.fileno(), self.output)
-		self.output = self.output[n:]
-		if self.output:
-			return True
-		else:
-			self._source_out = None
-			return False
-# }}}
+async def do_next2(mpd):
+	async with save_state(mpd) as status:
+		await mpd("random", str(1-int(status["random"])))
+		await mpd("next")
 
-class MPD(Gtk.EventBox):
+async def add_playlist(mpd, path, add):
+	async with save_state(mpd):
+		if not add:
+			await mpd("clear")
+		await mpd("add", path)
+
+class MPD2(Gtk.EventBox):
 	def __init__(self, keys=False, spacing=3):
 		super().__init__()
 
@@ -149,189 +167,134 @@ class MPD(Gtk.EventBox):
 		box.pack_start(scroll, False, False, 0)
 		self.add(box)
 
-		self.mpd = MPDClient(on_connect=self.on_connect)
-		self.mpd.connect()
-		self.mpd_state = None
-		self.random = None
-		self.current_song = None
-
 		self.treestore = Gtk.TreeStore(str, str, str) # Display name, search name, filename
 
+		p = Gdk.EventType.BUTTON_PRESS
 		self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-		self.connect("button-press-event", self.click_body)
+		self.connect("button-press-event", lambda _, e: (e.type, e.button) == (p, 3) and self.open_popup())
 		self.icon.set_has_window(True)
 		self.icon.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-		self.icon.connect("button-press-event", self.click_icon)
+		self.icon.connect("button-press-event", lambda _, e: (e.type, e.button) == (p, 1) and run_mpd(do_toggle))
+		self.icon.connect("button-press-event", lambda _, e: (e.type, e.button) == (p, 2) and run_mpd(do_stop))
 		self.text.set_has_window(True)
 		self.text.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-		self.text.connect("button-press-event", self.click_text)
+		def click_text(pos):
+			@run_mpd
+			async def coro(mpd):
+				if pos < .05:
+					await do_prev(mpd)
+				elif pos > .95:
+					await do_next(mpd)
+				else:
+					status = dict(await mpd("status"))
+					if "duration" in status:
+						mpd("seekcur", str(pos * status["duration"]))
+		self.text.connect("button-press-event", lambda l, e: (e.type, e.button) == (p, 1) and self.click_text(e.x / l.get_allocated_width()))
 
-		self.ticker = None
 		self.popup = None
 
 		if keys:
-			Keybinder.bind("AudioPlay", self.do_toggle)
-			Keybinder.bind("<Shift>AudioPlay", self.do_stop)
-			Keybinder.bind("AudioPrev", self.do_prev)
-			Keybinder.bind("<Shift>AudioPrev", self.do_prev2)
-			Keybinder.bind("AudioNext", self.do_next)
-			Keybinder.bind("<Shift>AudioNext", self.do_next2)
+			Keybinder.bind("AudioPlay", lambda _: run_mpd(do_toggle))
+			Keybinder.bind("<Shift>AudioPlay", lambda _: run_mpd(do_stop))
+			Keybinder.bind("AudioPrev", lambda _: run_mpd(do_prev))
+			Keybinder.bind("<Shift>AudioPrev", lambda _: run_mpd(do_prev2))
+			Keybinder.bind("AudioNext", lambda _: run_mpd(do_next))
+			Keybinder.bind("<Shift>AudioNext", lambda _: run_mpd(do_next2))
 
-	def search_function(self, model, column, key, rowiter, tree):
-		if key == key.lower():
-			match = lambda row: key.lower() in row[column].lower()
-		else:
-			match = lambda row: key in row[column]
-		def expand_row(row):
-			should_expand = any([expand_row(child) for child in row.iterchildren()])
-			if should_expand:
-				tree.expand_to_path(row.path)
-			else:
-				tree.collapse_row(row.path)
-			return should_expand or match(row)
-		row = model[rowiter]
-		expand_row(row)
-		return not match(row)
+		self.ticker_running = asyncio.Event()
+		self.ticker_running.set()
+		asyncio.ensure_future(self.run_ticker())
+		asyncio.ensure_future(self.run_idler())
 
-	def tree_activate_row(self, tree, path, column):
-		if getattr(Gtk.get_current_event(), "state", 0) & Gdk.ModifierType.SHIFT_MASK:
-			self.mpd.command("add", tree.get_model()[path][-1])
-		else:
-			self.mpd.command("clear")
-			self.mpd.command("add", tree.get_model()[path][-1])
-			self.mpd.command(self.mpd_state)
+	async def run_ticker(self):
+		while True:
+			try:
+				async with MpdClient() as mpd:
+					while True:
+						await self.ticker_running.wait()
+						await self.update_status(mpd)
+						await asyncio.sleep(0.1)
+			except MPDClosedError as e:
+				await asyncio.sleep(1)
 
-	def on_connect(self):
-		self.idle([("change", "player"), ("change", "database")])
+	async def run_idler(self):
+		while True:
+			try:
+				async with MpdClient() as mpd:
+					await self.update_status(mpd)
+					await self.update_database(mpd)
+					while True:
+						changed = dict(await mpd("idle"))["changed"]
+						if changed == "player": await self.update_status(mpd)
+						if changed == "database": await self.update_database(mpd)
+			except MPDClosedError as e:
+				self.set_state(MpdState.error)
+				await asyncio.sleep(1)
 
-	def idle(self, response):
-		if response is None: return
-		for k, v in response:
-			if v == "player":
-				self.mpd.command("status", callback=self.update_status)
-				self.mpd.command("currentsong", callback=self.update_song)
-			if v == "database":
-				self.treestore.clear()
-				self.treestore.append(None, row=["—", "", ""])
-				self.mpd.command("lsinfo", callback=lambda r: self.create_playlist(r, self.treestore, None))
-		self.mpd.command("idle", callback=self.idle)
+	async def update_database(self, mpd):
+		async def create_playlist(mpd, node, path):
+			files = []
+			for k, v in await mpd("lsinfo", path):
+				if k in ["file", "directory"]:
+					files.append({"_type": k})
+				files[-1][k] = v
 
-	def tick(self):
-		self.mpd.command("status", callback=self.update_status)
-		return True
+			for f in files:
+				if f["_type"] == "file":
+					self.treestore.append(node, row=[gettitle(f, num=True), gettitle(f), f["file"]])
+				elif f["_type"] == "directory":
+					dirname = os.path.basename(f["directory"])
+					child = self.treestore.append(node, row=[dirname, dirname, f["directory"]])
+					await create_playlist(mpd, child, f["directory"])
 
-	def update_status(self, response):
-		if response is None: return
-		status = dict(response)
-		self.mpd_state = status["state"]
-		self.random = int(status["random"])
-		self.icon.set_text({"play": "", "pause": "", "stop": ""}[self.mpd_state])
-		self.text.set_visible(self.mpd_state != "stop")
-		self.set_opacity(1 if self.mpd_state != "stop" else 0.25)
+		self.treestore.clear()
+		self.treestore.append(None, row=["—", "", ""])
+		await create_playlist(mpd, None, "")
 
-		if self.ticker is None and self.mpd_state == "play":
-			self.ticker = GLib.timeout_add(100, self.tick)
-		if self.ticker is not None and self.mpd_state != "play":
-			GLib.source_remove(self.ticker)
-			self.ticker = None
+	async def update_status(self, mpd):
+		status = dict(await mpd("status"))
+		self.set_state(MpdState[status["state"]])
 
 		if "elapsed" in status and "duration" in status:
-			self.text.set_bounds(float(status.get("elapsed")), float(status.get("duration")))
+			self.text.set_bounds(float(status["elapsed"]), float(status["duration"]))
 
-	def update_song(self, response):
-		if not response: return
-		currentsong = dict(response)
-		self.text.set_text(gettitle(currentsong))
-		self.current_song = currentsong["file"]
+		song = dict(await mpd("currentsong"))
+		self.text.set_text(gettitle(song))
+		self.current_song = song["file"]
 
-	def create_playlist(self, response, tree, node):
-		files = []
-		for k, v in response:
-			if k in ["file", "directory"]:
-				files.append({"_type": k})
-			files[-1][k] = v
-		for f in files:
-			if f["_type"] == "file":
-				tree.append(node, row=[gettitle(f, num=True), gettitle(f), f["file"]])
-			elif f["_type"] == "directory":
-				dirname = os.path.basename(f["directory"])
-				child = tree.append(node, row=[dirname, dirname, f["directory"]])
-				self.mpd.command("lsinfo", f["directory"], callback=lambda r, child=child: self.create_playlist(r, self.treestore, child))
-			else:
-				assert False
+	def set_state(self, state):
+		self.icon.set_text(""[state])
+		self.text.set_visible(state >= MpdState.pause)
+		self.set_opacity(1 if state >= MpdState.pause else 0.25)
 
-	def click_icon(self, icon, evt):
-		if evt.type != Gdk.EventType.BUTTON_PRESS: return
-		if evt.button == 1:
-			self.do_toggle()
-		if evt.button == 2:
-			self.do_stop()
-
-	def do_toggle(self, _=0):
-		if self.mpd_state != "play":
-			self.mpd.command("play")
+		if state == MpdState.play:
+			self.ticker_running.set()
 		else:
-			self.mpd.command("pause")
+			self.ticker_running.clear()
 
-	def do_stop(self, _=0):
-		self.mpd.command("stop")
+	def open_popup(self):
+		tree = Gtk.TreeView(self.treestore)
+		tree.insert_column_with_attributes(0, "Title", Gtk.CellRendererText(), text=0)
+		tree.set_enable_search(True)
+		tree.set_search_column(1)
+		tree.set_search_equal_func(search_tree, tree)
+		tree.set_headers_visible(False)
 
-	def do_prev(self, _=0):
-		def f(response):
-			if response is None: return
-			status = dict(response)
-			if "elapsed" in status and float(status["elapsed"]) < 1:
-				self.mpd.command("previous")
-			else:
-				self.mpd.command("seekcur", "0")
-		self.mpd.command("status", callback=f)
-		self.mpd.command(self.mpd_state)
-
-	def do_prev2(self, _=0):
-		self.mpd.command(f"random {1-self.random}")
-		self.mpd.command("previous")
-		self.mpd.command(f"random {self.random}")
-		self.mpd.command(self.mpd_state)
-
-	def do_next(self, _=0):
-		self.mpd.command("next")
-		self.mpd.command(self.mpd_state)
-
-	def do_next2(self, _=0):
-		self.mpd.command(f"random {1-self.random}")
-		self.mpd.command("next")
-		self.mpd.command(f"random {self.random}")
-		self.mpd.command(self.mpd_state)
-
-	def click_text(self, label, evt):
-		if evt.type != Gdk.EventType.BUTTON_PRESS: return
-		if evt.button == 1:
-			if evt.x < 5:
-				self.do_prev()
-			elif evt.x >= label.get_allocated_width() - 5:
-				self.do_next()
-			else:
-				self.mpd.command("seekcur", str(evt.x / label.get_allocated_width() * label.max))
-	
-	def click_body(self, body, evt):
-		if evt.type != Gdk.EventType.BUTTON_PRESS: return
-		if evt.button == 3:
-			tree = Gtk.TreeView(self.treestore)
-			tree.insert_column_with_attributes(0, "Title", Gtk.CellRendererText(), text=0)
-			tree.set_enable_search(True)
-			tree.set_search_column(1)
-			tree.set_search_equal_func(self.search_function, tree)
-			tree.set_headers_visible(False)
-			tree.connect("row-activated", self.tree_activate_row)
+		@run_mpd_sync
+		async def coro(mpd):
+			current_song = dict(await mpd("currentsong"))["file"]
 			def walk(model, path, iter):
-				if model[iter][-1] == self.current_song:
+				if model[iter][-1] == current_song:
 					tree.expand_to_path(path)
 					tree.scroll_to_cell(path, None, True, 0.5, 0.5)
 					tree.set_cursor(path, None, False)
 			self.treestore.foreach(walk)
-			self.popup = util.make_popup(util.framed(util.scrollable(tree, h=None)), self)
-			self.popup.set_default_size(0, 300)
-			self.popup.show_all()
+
+		tree.connect("row-activated", lambda _, path, __: run_mpd(add_playlist, tree.get_model()[path][-1], getattr(Gtk.get_current_event(), "state", 0) & Gdk.ModifierType.SHIFT_MASK))
+
+		self.popup = util.make_popup(util.framed(util.scrollable(tree, h=None)), self)
+		self.popup.set_default_size(0, 300)
+		self.popup.show_all()
 
 class ProgressLabel(Gtk.Label):
 	def __init__(self):
@@ -370,3 +333,19 @@ class ProgressLabel(Gtk.Label):
 		ctx.line_to(len, pos + thick)
 		ctx.line_to(0, pos + thick)
 		ctx.fill()
+
+def search_tree(model, column, key, rowiter, tree):
+	if key == key.lower():
+		match = lambda row: key.lower() in row[column].lower()
+	else:
+		match = lambda row: key in row[column]
+	def expand_row(row):
+		should_expand = any([expand_row(child) for child in row.iterchildren()])
+		if should_expand:
+			tree.expand_to_path(row.path)
+		else:
+			tree.collapse_row(row.path)
+		return should_expand or match(row)
+	row = model[rowiter]
+	expand_row(row)
+	return not match(row)
