@@ -36,18 +36,25 @@ Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), style_provide
 
 def create_strut(win):
 	from Xlib import display, Xatom
-	screen = win.get_screen()
-	curmon = screen.get_monitor_at_window(screen.get_active_window())
-	geom = screen.get_monitor_geometry(curmon)
+	mon = Gdk.Display.get_default().get_primary_monitor()
+	def update(mon):
+		geom = mon.get_geometry()
 
-	disp = display.Display()
-	xwin = disp.create_resource_object("window", win.get_window().get_xid())
-	xwin.change_property(
-		disp.intern_atom("_NET_WM_STRUT_PARTIAL"),
-		Xatom.CARDINAL,
-		32,
-		[0,0,0,config.HEIGHT, 0,0, 0,0, 0,0, 0,geom.width])
-	disp.sync()
+		disp = display.Display()
+		xwin = disp.create_resource_object("window", win.get_window().get_xid())
+		xwin.change_property(
+			disp.intern_atom("_NET_WM_STRUT"),
+			Xatom.CARDINAL,
+			32,
+			[0,0,0,config.HEIGHT])
+		xwin.change_property(
+			disp.intern_atom("_NET_WM_STRUT_PARTIAL"),
+			Xatom.CARDINAL,
+			32,
+			[0,0,0,config.HEIGHT, 0,0, 0,0, 0,0, 0,geom.width])
+		disp.sync()
+	mon.connect("invalidate", update)
+	update(mon)
 
 def mkwin():
 	w = Gtk.Window()
@@ -62,11 +69,8 @@ def create_window():
 	bg = mkwin()
 	bg.set_name("bg")
 
-	screen = bg.get_screen()
-	curmon = screen.get_monitor_at_window(screen.get_active_window())
-	geom = screen.get_monitor_geometry(curmon)
-	bg.resize(geom.width, config.HEIGHT)
 	bg.realize()
+	bg.resize(1, config.HEIGHT)
 	bg.get_window().set_child_input_shapes()
 
 	fg = mkwin()
