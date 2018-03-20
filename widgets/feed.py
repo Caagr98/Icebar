@@ -106,6 +106,10 @@ class Feeds(Gtk.EventBox):
 	def click(self, _, evt):
 		if (evt.button, evt.type) == (1, Gdk.EventType.BUTTON_PRESS):
 			self.menu.popup_at_widget(self, Gdk.Gravity.NORTH, Gdk.Gravity.SOUTH)
+		print(evt.button)
+		if (evt.button, evt.type) == (2, Gdk.EventType.BUTTON_PRESS):
+			for feed in self.feeds:
+				feed[0].fetch()
 
 class FeedInfo:
 	def __init__(self, name, url, entries):
