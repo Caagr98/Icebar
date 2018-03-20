@@ -5,7 +5,7 @@ import feedparser
 import bs4
 import sqlite3
 import util
-import webbrowser
+import subprocess
 
 __all__ = ["Feeds", "RSSFeed", "FFNFeed", "Firefox", "Luakit"]
 
@@ -67,7 +67,7 @@ class Feeds(Gtk.EventBox):
 		for child in menu.get_children():
 			menu.remove(child)
 
-		browserOpen = lambda item, url: webbrowser.open(url)
+		browserOpen = lambda item, url: subprocess.Popen(["xdg-open", url])
 		image.set_from_pixbuf([icon, iconGray][not feed.has_unread()])
 
 		menuitem = Gtk.MenuItem()
