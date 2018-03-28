@@ -1,140 +1,84 @@
-from gi.repository import GLib, GObject, Gdk
-import collections
+from gi.repository import Gdk
 import json
-import subprocess
-import socket
-import os
+import asyncio
+import struct
 from .workspaces import WSProvider
 
 __all__ = ["i3"]
 
-class i3ipc(GObject.Object):
+class i3ipc:
 	COMMAND, GET_WORKSPACES, SUBSCRIBE, GET_OUTPUTS, GET_TREE, GET_MARKS, GET_BAR_CONFIG, GET_VERSION, GET_BINDING_MODES = range(9)
 	E_WORKSPACE, E_OUTPUT, E_MODE, E_WINDOW, E_BARCONFIG_UPDATE, E_BINDING = range(6)
 
 	_MAGIC = b"i3-ipc"
+	_FORMAT = "=6sII"
 
-	@GObject.Signal
-	def ready(self): pass
-	@GObject.Signal(arg_types=[int, object])
-	def event(self, type, payload): pass
+	async def __new__(cls, *args):
+		self = super().__new__(cls)
+		await self._start()
+		self._queue = asyncio.Queue()
+		self._eventhandlers = []
+		asyncio.ensure_future(self._read())
+		return self
 
-	def __init__(self):
-		super().__init__()
-		self.socketpath = subprocess.check_output(["i3", "--get-socketpath"]).decode().rstrip("\n")
-		self._reset()
+	async def _start(self):
+		proc = await asyncio.create_subprocess_exec("i3", "--get-socketpath", stdout=asyncio.subprocess.PIPE)
+		stdout, _ = await proc.communicate()
+		self._r, self._w = await asyncio.open_unix_connection(stdout.decode().strip())
 
-	def _reset(self):
-		self.sock = None
-		self.queue = collections.deque()
-		self.inbuf = b""
-		self.outbuf = b""
-		self._source_in = None
-		self._source_err = None
-		self._source_out = None
-
-		self.state = 0
-		self.type, self.length = None, None
-
-	def connect_(self):
-		self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-		try:
-			self.sock.connect(self.socketpath)
-		except ConnectionRefusedError:
-			print("Failed to connect to i3 :(")
-			GLib.timeout_add_seconds(1, self.connect_)
-			return
-		self._source_in = GLib.io_add_watch(self, GLib.IO_IN, self._on_input)
-		self._source_err = GLib.io_add_watch(self, GLib.IO_ERR | GLib.IO_HUP, self._on_connection_lost)
-		self.emit("ready")
-
-	def disconnect_(self):
-		if self._source_in is not None: GLib.source_remove(self._source_in)
-		if self._source_err is not None: GLib.source_remove(self._source_err)
-		if self._source_out is not None: GLib.source_remove(self._source_out)
-		self.sock.close()
-		for a in self.queue:
-			if a is not None:
-				a(None)
-		self._reset()
-
-	def _on_connection_lost(self, source, state):
-		assert source == self
-		print("Connection to i3 lost, attempting to reestablish")
-		self.disconnect_()
-		self.connect_()
-		return False
-
-	def _on_input(self, source, state):
-		def skip(n):
-			a = self.inbuf[:n]
-			self.inbuf = self.inbuf[n:]
-			return a
-		self.inbuf += os.read(self.fileno(), 1<<16)
+	async def _read(self):
 		while True:
-			if self.state == 0 and len(self.inbuf) >= len(i3ipc._MAGIC) + 8:
-				assert skip(len(i3ipc._MAGIC)) == i3ipc._MAGIC
-				self.length = int.from_bytes(skip(4), "little")
-				self.type = int.from_bytes(skip(4), "little")
-				self.state = 1
-			if self.state == 1 and len(self.inbuf) >= self.length:
-				s = skip(self.length)
-				payload = json.loads(s)
-				if self.type & 0x80000000:
-					self.emit("event", self.type & 0x7FFFFFFF, payload)
-				else:
-					sent_type, callback = self.queue.popleft()
-					assert sent_type == self.type
-					if callback:
-						callback(payload)
-				self.type, self.length = None, None
-				self.state = 0
-				continue
-			break
-		return True
+			msgtype, payload = await self.recvmsg()
+			if msgtype & 0x80000000:
+				msgtype &= 0x7FFFFFFF
+				asyncio.gather(*(f(msgtype, payload) for f in self._eventhandlers))
+			else:
+				msgtype2, fut = await self._queue.get()
+				assert msgtype2 == msgtype
+				fut.set_result(payload)
 
-	def fileno(self):
-		return self.sock.fileno()
+	async def recvmsg(self):
+		magic, length, msgtype = struct.unpack(self._FORMAT, await self._r.read(14))
+		assert magic == self._MAGIC
+		payload = await self._r.read(length)
+		return msgtype, json.loads(payload)
 
-	def command(self, type, payload, callback=None):
-		self.queue.append((type, callback))
-		payload = payload.encode() if payload is not None else b''
-		s = (
-			i3ipc._MAGIC
-			+ int.to_bytes(len(payload), 4, "little")
-			+ int.to_bytes(type, 4, "little")
-			+ payload
-		)
-		self.outbuf += s
-		self._source_out = GLib.io_add_watch(self, GLib.IO_OUT, self._on_output)
-
-	def _on_output(self, source, state):
-		n = os.write(self.fileno(), self.outbuf)
-		self.outbuf = self.outbuf[n:]
-		if self.outbuf:
-			return True
+	async def command(self, msgtype, payload=None):
+		if payload is None:
+			payload = b""
+		elif isinstance(payload, (list, dict)):
+			payload = json.dumps(payload).encode()
+		elif isinstance(payload, str):
+			payload = payload.encode()
 		else:
-			self._source_out = None
-			return False
+			raise ValueError(type(payload))
+		fut = asyncio.Future()
+		await self._queue.put((msgtype, fut))
+		self._w.write(struct.pack(self._FORMAT, self._MAGIC, len(payload), msgtype))
+		self._w.write(payload)
+		return await fut
+
+	def on_event(self, f):
+		self._eventhandlers.append(f)
 
 class i3(WSProvider):
 	def __init__(self):
 		super().__init__()
-		self.i3 = i3ipc()
-		self.i3.connect_()
+		asyncio.ensure_future(self.start())
 
-		self.i3.command(i3ipc.SUBSCRIBE, '["workspace", "barconfig_update"]')
-		self.i3.command(i3ipc.GET_WORKSPACES, '', self.get_workspaces)
-		self.i3.command(i3ipc.GET_BAR_CONFIG, '',
-			lambda bars: [
-				self.i3.command(i3ipc.GET_BAR_CONFIG, bar, self.barconfig)
-				for bar in bars
-			])
-		self.i3.connect("event", self.on_event)
+	async def start(self):
+		self.i3 = await i3ipc()
+		self.i3.on_event(self.on_event)
 
-	def get_workspaces(self, workspaces):
+		await self.i3.command(i3ipc.SUBSCRIBE, ["workspace", "barconfig_update"])
+		self.i3.on_event(self.on_event)
+		await self.get_workspaces()
+		for bar in await self.i3.command(i3ipc.GET_BAR_CONFIG):
+			self.barconfig(await self.i3.command(i3ipc.GET_BAR_CONFIG, bar))
+
+	async def get_workspaces(self):
 		ws = []
-		for w in workspaces:
+		for w in await self.i3.command(i3ipc.GET_WORKSPACES):
 			c = {
 				"focused": w["focused"],
 				"focused-other": w["visible"],
@@ -149,12 +93,12 @@ class i3(WSProvider):
 			color.parse(barconfig["colors"]["focused_workspace_bg"])
 			self.emit("color", tuple(color))
 
-	def on_event(self, i3, type, payload):
+	async def on_event(self, type, payload):
 		if type == i3ipc.E_WORKSPACE:
 			if payload["change"] in ["focus", "urgent"]:
-				i3.command(i3ipc.GET_WORKSPACES, '', self.get_workspaces)
+				await self.get_workspaces()
 		if type == i3ipc.E_BARCONFIG_UPDATE:
 			self.barconfig(payload)
 
 	def set_workspace(self, name):
-		self.i3.command(i3ipc.COMMAND, "workspace " + name)
+		asyncio.ensure_future(self.i3.command(i3ipc.COMMAND, "workspace " + name))
