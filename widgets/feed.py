@@ -53,7 +53,7 @@ class Feeds(Gtk.EventBox):
 		popup = lambda: self.menu.popup_at_widget(self, Gdk.Gravity.NORTH, Gdk.Gravity.SOUTH)
 		self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
 		self.connect("button-press-event", lambda _, e: (e.type, e.button) == (Gdk.EventType.BUTTON_PRESS, 1) and popup())
-		self.connect("button-press-event", lambda _, e: (e.type, e.button) == (Gdk.EventType.BUTTON_PRESS, 3) and print(self.event_fetch.set(False)))
+		self.connect("button-press-event", lambda _, e: (e.type, e.button) == (Gdk.EventType.BUTTON_PRESS, 2) and self.event_fetch.set())
 
 	async def run(self, menus, feeds):
 		async def load_feed(session, feed):
@@ -111,10 +111,9 @@ class Feeds(Gtk.EventBox):
 		feeds2 = []
 		for feed in feeds:
 			if feed is None:
-				menu.add(Gtk.SeparatorMenuItem())
+				menu.add(Gtk.SeparatorMenuItem(visible=True))
 				continue
-			menuitem = Gtk.ImageMenuItem(label=feed.name, always_show_image=True)
-			menuitem.show()
+			menuitem = Gtk.ImageMenuItem(label=feed.name, always_show_image=True, visible=True)
 			menu.add(menuitem)
 			menus.append(menuitem)
 			feeds2.append(feed)
