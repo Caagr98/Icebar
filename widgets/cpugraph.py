@@ -14,7 +14,7 @@ class CPUGraph(Gtk.DrawingArea):
 		self.samples = [Sample(0, 0, 0)] * width
 		self.cores = 1
 
-		GLib.timeout_add(100, self.update)
+		GLib.timeout_add(interval, self.update)
 		self.connect("draw", self.draw)
 		self.set_size_request(width, 0)
 

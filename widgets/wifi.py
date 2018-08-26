@@ -1,84 +1,10 @@
-from gi.repository import Gtk, Gdk, GLib
-import socket
-import fcntl
-import struct
-import array
-import ipaddress
-import util
+from gi.repository import Gtk, GLib
+from simplewifi import wifi_status
 
 __all__ = ["Wifi"]
-
-# see /usr/include/linux/if.h and sockios.h
-SIOCGIWESSID = 0x8B1B
-SIOCGIWSTATS = 0x8B0F
-SIOCGIFFLAGS = 0x8913
-SIOCGIFADDR = 0x8915
-SIOCGIFHWADDR = 0x8927
-
-IFF_UP = 1<<0
-
-IW_ESSID_MAX_SIZE = 32
-
-def ioctl_ptr(sock, ctl, name, buffer, flags=0):
-	fmt = "<16sQHH"
-	buf = array.array("B", struct.pack(fmt, name.encode(), buffer.buffer_info()[0], len(buffer), 0))
-	fcntl.ioctl(sock.fileno(), ctl, buf)
-	buffer_len = struct.unpack(fmt, buf)[2]
-	return buffer.tobytes()[:buffer_len]
-
-def get_essid(sock, name):
-	buf = array.array('B', b'\0' * IW_ESSID_MAX_SIZE)
-	return ioctl_ptr(sock, SIOCGIWESSID, name, buf).decode() or None
-
-def get_quality(sock, name):
-	buf = array.array('B', b'\0' * 32)
-	ret = ioctl_ptr(sock, SIOCGIWSTATS, name, buf)
-	return ret[2]
-
-def get_up(sock, name):
-	fmt = "<16sH"
-	buf = array.array("B", struct.pack(fmt, name.encode(), 0))
-	fcntl.ioctl(sock.fileno(), SIOCGIFFLAGS, buf)
-	flags = struct.unpack(fmt, buf)[1]
-	return bool(flags & IFF_UP)
-
-def get_ipv4(sock, name):
-	fmt = "<16sH2s4s"
-	buf = array.array("B", struct.pack(fmt, name.encode(), 0, b"", b""))
-	fcntl.ioctl(sock.fileno(), SIOCGIFADDR, buf)
-	a = struct.unpack(fmt, buf)[3]
-	return str(ipaddress.IPv4Address(int.from_bytes(a, "big")))
-
-def get_ipv6(sock, name):
-	with open("/proc/net/if_inet6") as f:
-		inet6 = f.read().strip().split("\n")
-		for line in inet6:
-			addr, id, prefix, scope, flags, name_ = line.split()
-			if name_ == name:
-				return str(ipaddress.IPv6Address(int(addr, 16)))
-
-def get_mac(sock, name):
-	fmt = "<16sH6s"
-	buf = array.array("B", struct.pack(fmt, name.encode(), 0, b""))
-	fcntl.ioctl(sock.fileno(), SIOCGIFHWADDR, buf)
-	a = struct.unpack(fmt, buf)[2]
-	return ":".join("%02x" % i for i in a)
-
-def wifi_status(name):
-	s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-	up = get_up(s, name)
-	essid = util.safely(lambda: get_essid(s, name))
-	quality = util.safely(lambda: get_quality(s, name), 0)
-	ipv4 = util.safely(lambda: get_ipv4(s, name))
-	ipv6 = util.safely(lambda: get_ipv6(s, name))
-	mac = util.safely(lambda: get_mac(s, name))
-	s.close()
-	return (up, essid, quality, ipv4, ipv6, mac)
-
 class Wifi(Gtk.EventBox):
-	def __init__(self, interface, spacing=3):
+	def __init__(self, *, spacing=3):
 		super().__init__()
-		self.interface = interface
 
 		self.icon = Gtk.Label()
 		self.text = Gtk.Label()
@@ -88,16 +14,21 @@ class Wifi(Gtk.EventBox):
 		self.add(box)
 
 		self.tooltip = Gtk.Grid()
-		def row(l, i):
+		n = 0
+		def row(l):
+			nonlocal n
 			left = Gtk.Label(l, xalign=0)
 			right = Gtk.Label(xalign=1)
-			self.tooltip.attach(left, 0, i, 1, 1)
-			self.tooltip.attach(right, 1, i, 1, 1)
+			self.tooltip.attach(left, 0, n, 1, 1)
+			self.tooltip.attach(right, 1, n, 1, 1)
+			n += 1
 			return right
-		self.tt_quality = row("Quality", 0)
-		self.tt_ipv4 = row("IPv4", 1)
-		self.tt_ipv6 = row("IPv6", 2)
-		self.tt_mac = row("MAC", 3)
+		self.tt_name = row("Name")
+		self.tt_ssid = row("SSID")
+		self.tt_quality = row("Quality")
+		self.tt_ipv4 = row("IPv4")
+		self.tt_ipv6 = row("IPv6")
+		self.tt_mac = row("MAC")
 		self.tooltip.show_all()
 
 		def tooltip(self, x, y, keyboard, tooltip):
@@ -107,8 +38,6 @@ class Wifi(Gtk.EventBox):
 
 		GLib.timeout_add_seconds(1, self.update)
 		self.update()
-		self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-		self.connect("button-press-event", self.click)
 
 		self.icon.show()
 		self.text.show()
@@ -116,11 +45,17 @@ class Wifi(Gtk.EventBox):
 		self.show()
 
 	def update(self):
-		up, essid, quality, ipv4, ipv6, mac = wifi_status(self.interface)
+		for (name, up, essid, quality, ipv4, ipv6, mac) in wifi_status():
+			if essid is not None:
+				break
+		else:
+			(name, up, essid, quality, ipv4, ipv6, mac) = (None,) * 7
 
 		if up is not None and essid is not None:
 			self.set_opacity(1)
 			self.set_has_tooltip(True)
+			self.tt_name.set_text(name)
+			self.tt_ssid.set_text(essid)
 			self.tt_quality.set_text("{}%".format(quality))
 			self.tt_ipv4.set_text(ipv4 or "-")
 			self.tt_ipv6.set_text(ipv6 or "-")
@@ -133,6 +68,3 @@ class Wifi(Gtk.EventBox):
 		self.text.set_text({None: "ERROR", False: "OFF", True: essid or "DOWN"}[up])
 
 		return True
-
-	def click(self, _, evt):
-		pass

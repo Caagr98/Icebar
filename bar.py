@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 import gi
 gi.require_version("Gtk", "3.0")
-gi.require_version("Keybinder", "3.0")
-from gi.repository import Gtk, Gdk, Keybinder
+# gi.require_version("Keybinder", "3.0")
+from gi.repository import Gtk, Gdk#, Keybinder
 
 import os
 import sys
 sys.stdout = os.fdopen(sys.stdout.fileno(), "w", 1)
 sys.stderr = os.fdopen(sys.stderr.fileno(), "w", 1)
 
-from dbus.mainloop.glib import DBusGMainLoop
-DBusGMainLoop(set_as_default=True)
-import gbulb
-gbulb.install(gtk=True)
+import signal
+import asyncio
+
+import aioglib
+asyncio.get_event_loop_policy().set_event_loop(aioglib.GLibEventLoop())
+asyncio.get_event_loop_policy().set_child_watcher(aioglib.GLibChildWatcher())
+
+# asyncio.get_event_loop_policy().get_event_loop().set_debug(True)
+# import logging
+# logging.basicConfig(level=logging.DEBUG)
 
 def get_config():
 	import importlib.util
@@ -24,7 +30,7 @@ def get_config():
 			config = importlib.util.module_from_spec(spec)
 			spec.loader.exec_module(config)
 			return config
-		except (FileNotFoundError, ImportError) as e:
+		except (FileNotFoundError, ImportError):
 			pass
 	else:
 		import config
@@ -69,11 +75,10 @@ def mkwin():
 
 def create_window():
 	bg = mkwin()
-	bg.set_name("bg")
-
 	bg.realize()
 	bg.resize(1, config.HEIGHT)
 	bg.get_window().set_child_input_shapes()
+	bg.set_name("bg")
 
 	fg = mkwin()
 	fg.realize()
@@ -92,17 +97,16 @@ def create_window():
 
 	return bg, fg
 
-def draw_bg(self, ctx, a2):
-	import cairo
+def draw_bg(self, cr, alpha):
 	style = self.get_style_context()
-	r,g,b,a=style.get_background_color(style.get_state())
-	ctx.set_source_rgba(r,g,b,a*a2)
-	ctx.set_operator(cairo.OPERATOR_SOURCE)
-	ctx.paint()
-	ctx.set_operator(cairo.OPERATOR_OVER)
+	w, h = self.get_allocated_width(), self.get_allocated_height()
+	cr.push_group()
+	Gtk.render_background(style, cr, 0, 0, w, h)
+	cr.pop_group_to_source()
+	cr.paint_with_alpha(alpha)
 
 def __main__():
-	Keybinder.init()
+	# Keybinder.init()
 	bg, fg = create_window()
 	box = Gtk.Box()
 	fg.connect("draw", draw_bg, 1/2)
@@ -140,16 +144,7 @@ def __main__():
 	fg.show_all()
 	update_seps()
 
-	if config.KEYBINDING:
-		def toggle_visibility(key, win):
-			win.set_visible(not win.is_visible())
-		Keybinder.bind(config.KEYBINDING, toggle_visibility, bg)
-
-	from gi.repository import GLib
-	try:
-		loop = GLib.MainLoop()
-		loop.run()
-	except KeyboardInterrupt:
-		os._exit(0)
+	signal.signal(signal.SIGINT, lambda s, f: asyncio.get_event_loop().stop())
+	asyncio.get_event_loop().run_forever()
 
 if __name__ == "__main__": __main__()

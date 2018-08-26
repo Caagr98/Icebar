@@ -1,7 +1,6 @@
 import widgets
 import widgets.ws
 
-KEYBINDING = "<Super>F2"
 HEIGHT = 21
 
 CSS = """
@@ -13,9 +12,10 @@ def left():
 
 def right():
 	yield widgets.Clock()
-	yield widgets.Battery("/sys/class/power_supply/BAT0")
+	yield widgets.IBus({"kkc": "日本語"})
+	yield widgets.Battery("/sys/class/power_supply/BAT0", verbose=2)
 	yield widgets.Temperature("coretemp-isa-0000", "Package id 0", 45)
-	yield widgets.Wifi("wlp2s0")
+	yield widgets.Wifi()
 	yield widgets.RAM()
 	yield widgets.CPUGraph()
-	yield widgets.Volume(keys=True)
+	yield widgets.AlsaVolume(keys=False)

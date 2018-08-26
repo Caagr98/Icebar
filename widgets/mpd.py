@@ -152,6 +152,9 @@ async def add_playlist(mpd, path, add):
 			await mpd("clear")
 		await mpd("add", path)
 
+async def do_command(mpd, *command):
+	await mpd(*command)
+
 class MPD2(Gtk.EventBox):
 	def __init__(self, keys=False, spacing=3):
 		super().__init__()
@@ -169,6 +172,25 @@ class MPD2(Gtk.EventBox):
 
 		self.treestore = Gtk.TreeStore(str, str, str) # Display name, search name, filename
 
+		async def toggle_repeat(mpd):
+			status = dict(await mpd("status"))
+			if status["single"] == "1":
+				await mpd.list([["single", "0"], ["repeat", "0"]])
+			elif status["repeat"] == "1":
+				await mpd.list([["single", "1"], ["repeat", "1"]])
+			else:
+				await mpd.list([["single", "0"], ["repeat", "1"]])
+		self.repBtn = Gtk.Button(image=Gtk.Image())
+		self.repBtn.connect("clicked", lambda _: run_mpd(toggle_repeat))
+		self.repBtn.connect("clicked", lambda b: b.set_state_flags(Gtk.StateFlags.CHECKED, False))
+
+		async def toggle_shuffle(mpd):
+			status = dict(await mpd("status"))
+			await mpd("random", "01"[status["random"] == "0"])
+		self.shufBtn = Gtk.Button(image=Gtk.Image())
+		self.shufBtn.connect("clicked", lambda _: run_mpd(toggle_shuffle))
+		self.shufBtn.connect("clicked", lambda b: b.set_state_flags(Gtk.StateFlags.CHECKED, False))
+
 		p = Gdk.EventType.BUTTON_PRESS
 		self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
 		self.connect("button-press-event", lambda _, e: (e.type, e.button) == (p, 3) and self.open_popup())
@@ -178,18 +200,16 @@ class MPD2(Gtk.EventBox):
 		self.icon.connect("button-press-event", lambda _, e: (e.type, e.button) == (p, 2) and run_mpd(do_stop))
 		self.text.set_has_window(True)
 		self.text.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-		def click_text(pos):
-			@run_mpd
-			async def coro(mpd):
-				if pos < .05:
-					await do_prev(mpd)
-				elif pos > .95:
-					await do_next(mpd)
-				else:
-					status = dict(await mpd("status"))
-					if "duration" in status:
-						mpd("seekcur", str(pos * status["duration"]))
-		self.text.connect("button-press-event", lambda l, e: (e.type, e.button) == (p, 1) and self.click_text(e.x / l.get_allocated_width()))
+		async def click_text(mpd, pos):
+			if pos < .05:
+				await do_prev(mpd)
+			elif pos > .95:
+				await do_next(mpd)
+			else:
+				status = dict(await mpd("status"))
+				if "duration" in status:
+					await mpd("seekcur", str(pos * float(status["duration"])))
+		self.text.connect("button-press-event", lambda l, e: (e.type, e.button) == (p, 1) and run_mpd(click_text, e.x / l.get_allocated_width()))
 
 		self.popup = None
 
@@ -223,10 +243,12 @@ class MPD2(Gtk.EventBox):
 				async with MpdClient() as mpd:
 					await self.update_status(mpd)
 					await self.update_database(mpd)
+					await self.update_options(mpd)
 					while True:
 						changed = dict(await mpd("idle"))["changed"]
 						if changed == "player": await self.update_status(mpd)
 						if changed == "database": await self.update_database(mpd)
+						if changed == "options": await self.update_options(mpd)
 			except MPDClosedError as e:
 				self.set_state(MpdState.error)
 				await asyncio.sleep(1)
@@ -260,7 +282,6 @@ class MPD2(Gtk.EventBox):
 
 		song = dict(await mpd("currentsong"))
 		self.text.set_text(gettitle(song))
-		self.current_song = song["file"]
 
 	def set_state(self, state):
 		self.icon.set_text(""[state])
@@ -272,17 +293,25 @@ class MPD2(Gtk.EventBox):
 		else:
 			self.ticker_running.clear()
 
+	async def update_options(self, mpd):
+		status = dict(await mpd("status"))
+		set_icon = lambda c, s: c.get_image().set_from_icon_name(f"media-playlist-{s}-symbolic", Gtk.IconSize.BUTTON)
+		set_flag = lambda c, f, v: c.set_state_flags(f, False) if v else c.unset_state_flags(f)
+
+		set_icon(self.repBtn, "repeat" + "-song" * int(status["single"]))
+		set_icon(self.shufBtn, "shuffle")
+		set_flag(self.repBtn, Gtk.StateFlags.CHECKED, int(status["repeat"]))
+		set_flag(self.shufBtn, Gtk.StateFlags.CHECKED, int(status["random"]))
+
 	def open_popup(self):
-		tree = Gtk.TreeView(self.treestore)
-		tree.insert_column_with_attributes(0, "Title", Gtk.CellRendererText(), text=0)
-		tree.set_enable_search(True)
-		tree.set_search_column(1)
+		tree = Gtk.TreeView(self.treestore, enable_search=True, search_column=1, headers_visible=False)
 		tree.set_search_equal_func(search_tree, tree)
-		tree.set_headers_visible(False)
+		tree.insert_column_with_attributes(0, "Title", Gtk.CellRendererText(), text=0)
+		tree.connect("row-activated", lambda _, path, __: run_mpd(add_playlist, tree.get_model()[path][-1], getattr(Gtk.get_current_event(), "state", 0) & Gdk.ModifierType.SHIFT_MASK))
 
 		@run_mpd_sync
 		async def coro(mpd):
-			current_song = dict(await mpd("currentsong"))["file"]
+			current_song = dict(await mpd("currentsong")).get("file")
 			def walk(model, path, iter):
 				if model[iter][-1] == current_song:
 					tree.expand_to_path(path)
@@ -290,10 +319,19 @@ class MPD2(Gtk.EventBox):
 					tree.set_cursor(path, None, False)
 			self.treestore.foreach(walk)
 
-		tree.connect("row-activated", lambda _, path, __: run_mpd(add_playlist, tree.get_model()[path][-1], getattr(Gtk.get_current_event(), "state", 0) & Gdk.ModifierType.SHIFT_MASK))
+		vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+		stree = util.scrollable(tree, h=None)
+		stree.set_size_request(0, 300)
+		vbox.pack_start(stree, False, False, 0)
 
-		self.popup = util.make_popup(util.framed(util.scrollable(tree, h=None)), self)
-		self.popup.set_default_size(0, 300)
+		buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, halign=Gtk.Align.CENTER, spacing=4)
+		self.repBtn.unparent()
+		self.shufBtn.unparent()
+		buttons.add(self.repBtn)
+		buttons.add(self.shufBtn)
+		vbox.pack_end(buttons, True, True, 2)
+
+		self.popup = util.make_popup(util.framed(vbox), self)
 		self.popup.show_all()
 
 class ProgressLabel(Gtk.Label):

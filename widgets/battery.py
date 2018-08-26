@@ -7,9 +7,10 @@ import cairo
 __all__ = ["Battery"]
 
 class Battery(Gtk.EventBox):
-	def __init__(self, path, spacing=3):
+	def __init__(self, path, verbose=0, spacing=3):
 		super().__init__()
 		self.path = os.path.join(path, "uevent")
+		self.verbose = verbose
 
 		self.icon = BatteryIcon()
 		self.text = Gtk.Label()
@@ -53,6 +54,8 @@ class Battery(Gtk.EventBox):
 		energy_full = get("energy_full", "charge_full")
 		energy_design = get("energy_full_design", "charge_full_design")
 		current = get("power_now", "current_now")
+		if status == "Discharging":
+			current = -current
 		voltage_now = get("voltage_now")
 		voltage_design = get("voltage_min_design")
 
@@ -70,16 +73,18 @@ class Battery(Gtk.EventBox):
 		charge = energy_now / energy_full
 		text = "{:.0f}%".format(100 * charge)
 
-		if abs(current) > 0.01:
-			charging = status == "Charging"
-			symbol = {"Charging": "↑", "Discharging": "↓"}.get(status, "")
+		if self.verbose > 0:
+			if abs(current) > 0.01:
+				symbol = {"Charging": "↑", "Discharging": "↓"}.get(status, "")
 
-			if charging:
-				remaining = energy_full - energy_now
-			else:
-				remaining = energy_now
-			remainingTime = time.strftime("%H:%M", time.gmtime(remaining / current * 60**2))
-			text += " {}{:.2f}W ({})".format(symbol, current, remainingTime)
+				if current < 0:
+					remaining = energy_full - energy_now
+				else:
+					remaining = energy_now
+				remainingTime = time.strftime("%H:%M", time.gmtime(remaining / abs(current) * 3600))
+				text += " {}{:.2f}W ({})".format(symbol, abs(current), remainingTime)
+			elif self.verbose > 1:
+				text += "  -.--W (--:--)"
 		self.text.set_text(text)
 
 		return True

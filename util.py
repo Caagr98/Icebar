@@ -77,3 +77,17 @@ def scrollable(widget, *, h=True, v=True):
 	scroll = Gtk.ScrolledWindow(hscrollbar_policy=pol[h], vscrollbar_policy=pol[v])
 	scroll.add(widget)
 	return scroll
+
+def print_exc(exc):
+	try:
+		raise exc
+	except Exception:
+		import traceback
+		traceback.print_exc()
+
+def format_exc(exc):
+	try:
+		raise exc
+	except Exception:
+		import traceback
+		return traceback.format_exc()

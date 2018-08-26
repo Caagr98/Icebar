@@ -1,4 +1,4 @@
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, GLib
 import re
 import subprocess
 import util
@@ -6,7 +6,6 @@ import util
 __all__ = ["Temperature"]
 
 input_re = re.compile(r"^  (\w+)(\d+)_(\w+): (\d+\.\d+)$")
-
 
 def get_temps():
 	out = subprocess.check_output(["sensors", "-u"]).decode()
