@@ -77,7 +77,7 @@ class Battery(Gtk.EventBox):
 			if abs(current) > 0.01:
 				symbol = {"Charging": "↑", "Discharging": "↓"}.get(status, "")
 
-				if current < 0:
+				if current > 0:
 					remaining = energy_full - energy_now
 				else:
 					remaining = energy_now
