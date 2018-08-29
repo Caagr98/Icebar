@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 import gi
 gi.require_version("Gtk", "3.0")
-# gi.require_version("Keybinder", "3.0")
-from gi.repository import Gtk, Gdk#, Keybinder
+from gi.repository import Gtk, Gdk
 
 import os
 import sys
@@ -89,6 +88,7 @@ def create_window():
 	def onresize(*args):
 		fg.move(*bg.get_position())
 		fg.resize(*bg.get_size())
+		bg.get_window().set_child_input_shapes()
 
 	bg.connect("configure-event", onresize)
 	bg.connect("show", lambda win: (fg.hide(), fg.show()))
@@ -106,7 +106,6 @@ def draw_bg(self, cr, alpha):
 	cr.paint_with_alpha(alpha)
 
 def __main__():
-	# Keybinder.init()
 	bg, fg = create_window()
 	box = Gtk.Box()
 	fg.connect("draw", draw_bg, 1/2)

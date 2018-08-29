@@ -4,7 +4,7 @@ import simplealsa
 __all__ = ["AlsaVolume"]
 
 class AlsaVolume(Gtk.EventBox):
-	def __init__(self, card="hw:0", name=("Master", "Speaker"), id=0, base=80, keys=False, spacing=3):
+	def __init__(self, card="hw:0", name=("Master", "Speaker"), id=0, base=80, spacing=3):
 		super().__init__()
 
 		self.icon = Gtk.Label("♪")
@@ -37,17 +37,6 @@ class AlsaVolume(Gtk.EventBox):
 			return True
 		for fd in self.alsa.fds():
 			GLib.io_add_watch(fd.fd, GLib.IO_IN, update)
-
-		if keys:
-			def toggleSwitch(): self.elem.switch.all = not self.elem.switch.all
-			def setSwitch(v): self.elem.switch.all = v
-			def changeVolume(n): self.elem.mB.all += n
-			# Keybinder.bind("AudioMute", lambda _: toggleSwitch())
-			# Keybinder.bind("AudioRaiseVolume", lambda _: changeVolume(+250))
-			# Keybinder.bind("AudioLowerVolume", lambda _: changeVolume(-250))
-			# Keybinder.bind("<Shift>AudioMute", lambda _: setSwitch(False))
-			# Keybinder.bind("<Shift>AudioRaiseVolume", lambda _: changeVolume(+50))
-			# Keybinder.bind("<Shift>AudioLowerVolume", lambda _: changeVolume(-50))
 
 	def update_volume(self, *_):
 		self.text.set_text("{:.1f} dB".format(self.volume.mB.all / 100 + self.base))

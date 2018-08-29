@@ -18,4 +18,4 @@ def right():
 	yield widgets.Wifi()
 	yield widgets.RAM()
 	yield widgets.CPUGraph()
-	yield widgets.AlsaVolume(keys=False)
+	yield widgets.AlsaVolume()
