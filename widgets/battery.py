@@ -1,15 +1,15 @@
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, GLib
 import os.path
 import time
-import configparser
 import cairo
+import simplebat
 
 __all__ = ["Battery"]
 
 class Battery(Gtk.EventBox):
 	def __init__(self, path, verbose=0, spacing=3):
 		super().__init__()
-		self.path = os.path.join(path, "uevent")
+		self.path = path
 		self.verbose = verbose
 
 		self.icon = BatteryIcon()
@@ -19,10 +19,31 @@ class Battery(Gtk.EventBox):
 		box.pack_start(self.text, False, False, 0)
 		self.add(box)
 
+		self.tooltip = Gtk.Grid()
+		n = 0
+		def row(l):
+			nonlocal n
+			left = Gtk.Label(l, xalign=0)
+			right = Gtk.Label(xalign=1)
+			self.tooltip.attach(left, 0, n, 1, 1)
+			self.tooltip.attach(right, 1, n, 1, 1)
+			n += 1
+			return right
+		self.tt_status = row("Status")
+		self.tt_energy = row("Energy")
+		self.tt_current = row("Current")
+		self.tt_voltage = row("Voltage")
+		self.tt_capacity = row("Capacity")
+		self.tooltip.show_all()
+		self.set_has_tooltip(True)
+
+		def tooltip(self, x, y, keyboard, tooltip):
+			tooltip.set_custom(self.tooltip)
+			return True
+		self.connect("query-tooltip", tooltip)
+
 		GLib.timeout_add_seconds(1, self.update)
 		self.update()
-		self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-		self.connect("button-press-event", self.click)
 
 	def update(self):
 		if os.path.exists(self.path):
@@ -31,66 +52,30 @@ class Battery(Gtk.EventBox):
 			self.hide()
 			return True
 
-		cfg = configparser.ConfigParser()
-		with open(self.path, "r") as f:
-			cfg.read_string("[_]\n" + f.read())
-		battery = {}
-		for k in cfg["_"]:
-			val = cfg["_"][k]
-			try:
-				val = int(val)
-			except ValueError:
-				pass
-			battery[k.lower()[13:]] = val
-		def get(a, b=None): # Because XPS 9560 is weird
-			if a in battery:
-				return battery[a] / 1000000
-			if b in battery:
-				return battery[b] / 100000
-			return 0
+		bat = simplebat.BatteryStatus(self.path)
 
-		status = battery["status"]
-		energy_now = get("energy_now", "charge_now")
-		energy_full = get("energy_full", "charge_full")
-		energy_design = get("energy_full_design", "charge_full_design")
-		current = get("power_now", "current_now")
-		if status == "Discharging":
-			current = -current
-		voltage_now = get("voltage_now")
-		voltage_design = get("voltage_min_design")
+		self.tt_status.set_text(bat.status)
+		self.tt_energy.set_text(f"{bat.energy_now}/{bat.energy_full} Wh ({bat.energy_now/bat.energy_full*100:.1f}%)")
+		self.tt_current.set_text(f"{bat.current:+} W")
 
-		self.set_tooltip_text(__import__("textwrap").dedent(f"""
-		Status: {status}
-		Energy: {energy_now}/{energy_full} Wh ({energy_now/energy_full*100:.1f}%)
-		Current: {current:+} W
+		self.tt_voltage.set_text(f"{bat.voltage_now}/{bat.voltage_design} V ({(bat.voltage_now/bat.voltage_design-1)*100:+.1f}%)")
+		self.tt_capacity.set_text(f"{bat.energy_full}/{bat.energy_design} Wh ({bat.energy_full/bat.energy_design*100:.1f}%)")
 
-		Voltage: {voltage_now}/{voltage_design} V ({(voltage_now/voltage_design-1)*100:+.1f}%)
-		Capacity: {energy_full}/{energy_design} Wh ({energy_full/energy_design*100:.1f}%)
-		""").strip("\n"))
-
-		self.icon.set_value(energy_now / energy_full)
-
-		charge = energy_now / energy_full
-		text = "{:.0f}%".format(100 * charge)
+		charge = bat.energy_now / bat.energy_full
+		self.icon.set_value(charge)
+		text = "{:.0f}%".format(charge*100)
 
 		if self.verbose > 0:
-			if abs(current) > 0.01:
-				symbol = {"Charging": "↑", "Discharging": "↓"}.get(status, "")
+			if abs(bat.current) > 0.01:
+				symbol = {"Charging": "↑", "Discharging": "↓"}.get(bat.status, "")
 
-				if current > 0:
-					remaining = energy_full - energy_now
-				else:
-					remaining = energy_now
-				remainingTime = time.strftime("%H:%M", time.gmtime(remaining / abs(current) * 3600))
-				text += " {}{:.2f}W ({})".format(symbol, abs(current), remainingTime)
+				remainingTime = time.strftime("%H:%M", time.gmtime(bat.remaining))
+				text += " {}{:.2f}W ({})".format(symbol, abs(bat.current), remainingTime)
 			elif self.verbose > 1:
 				text += "  -.--W (--:--)"
 		self.text.set_text(text)
 
 		return True
-
-	def click(self, _, evt):
-		pass
 
 class BatteryIcon(Gtk.DrawingArea):
 	def __init__(self):
