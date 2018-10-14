@@ -12,10 +12,10 @@ class i3(WSProvider):
 
 	async def start(self):
 		self.i3 = await i3ipc()
-		self.i3.on_event(self.on_event)
 
 		await self.i3.command(i3ipc.SUBSCRIBE, ["workspace", "barconfig_update"])
 		self.i3.on_event(self.on_event)
+
 		await self.get_workspaces()
 		for bar in await self.i3.command(i3ipc.GET_BAR_CONFIG):
 			self.barconfig(await self.i3.command(i3ipc.GET_BAR_CONFIG, bar))

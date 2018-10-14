@@ -56,7 +56,7 @@ class Wifi(Gtk.EventBox):
 			self.set_has_tooltip(True)
 			self.tt_name.set_text(name)
 			self.tt_ssid.set_text(essid)
-			self.tt_quality.set_text("{}%".format(quality))
+			self.tt_quality.set_text("{}%".format(quality or 0))
 			self.tt_ipv4.set_text(ipv4 or "-")
 			self.tt_ipv6.set_text(ipv6 or "-")
 			self.tt_mac.set_text(mac or "-")
