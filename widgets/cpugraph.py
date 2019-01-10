@@ -24,11 +24,12 @@ class CPUGraph(Gtk.DrawingArea):
 		self.cores = psutil.cpu_count()
 		if self.last_cpu:
 			tot = (psutil._cpu_tot_time(cpu) - psutil._cpu_tot_time(self.last_cpu)) or 1e10 # Sometimes zero, so set it to something huge
-			self.samples = self.samples[1:] + [Sample(
+			self.samples.pop(0)
+			self.samples.append(Sample(
 				(cpu.user - self.last_cpu.user) / tot,
 				(cpu.system - self.last_cpu.system) / tot,
 				(cpu.iowait - self.last_cpu.iowait) / tot,
-			)]
+			))
 		self.last_cpu = cpu
 		self.queue_draw()
 		return True
